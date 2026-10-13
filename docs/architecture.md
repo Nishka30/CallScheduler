@@ -1,0 +1,350 @@
+# AI Caller — Architecture
+
+## Purpose
+
+The AI Caller places outbound voice calls to **new** travel leads, has a natural
+conversation grounded in the lead's existing travel-form answers, books a
+consultation when appropriate, and writes a single plain-text note back to the
+CRM.
+
+This document describes the system boundaries and the planned integration flow.
+Only **Phase 1 (foundation)** is implemented today; everything marked _planned_
+is design intent, not working code.
+
+## System boundaries
+
+| System         | Role                                                                              | Direction       | Status      |
+| -------------- | --------------------------------------------------------------------------------- | --------------- | ----------- |
+| **Lead API**   | Source of truth for leads, person history, form responses, assignments, CRM notes | AI Caller → API | _planned_   |
+| **Retell**     | Outbound voice calls, call status, transcripts, completion webhooks               | both directions | _planned_   |
+| **Calendly**   | Consultation availability and appointment booking                                 | AI Caller → API | _planned_   |
+| **PostgreSQL** | The AI Caller's own processing records and call history                           | owned by us     | implemented |
+
+The critical ownership rule: **the Lead API owns lead data; we own processing
+state.** We never mirror the CRM. Our database holds only what we need to decide
+whether a lead should be called, to prevent duplicate calls, and to record what
+happened on each call.
+
+## Layering
+
+```
+HTTP request
+    ↓
+routes/        URL shape and method only
+    ↓
+controllers/   parse + validate input, choose a status code; no business logic
+    ↓
+services/      business logic; the only layer that coordinates decisions
+    ↓
+repositories/  database access and concurrency rules
+    ↓
+lib/prisma     a single shared PrismaClient
+```
+
+`integrations/` was added in Phase 2 for outbound API clients. It sits beside
+`lib/`: services depend on it, it depends on nothing above it. Keeping provider
+clients out of `services/` lets the eligibility rules be unit-tested without any
+knowledge of HTTP.
+
+`config/` is validated once at startup and read by everything else.
+`middleware/` wraps the pipeline (correlation id, access logging, error
+handling). Dependencies point in one direction only — no layer imports from a
+layer above it, which keeps the graph acyclic.
+
+## Data model (Phase 1)
+
+Three tables, each with a narrow job.
+
+### `lead_processing`
+
+One row per lead that has entered our workflow. It answers "have we already
+dealt with this lead, and is someone working on it right now?"
+
+Duplicate-call prevention has two independent parts:
+
+1. **`leadId` is unique** — prevents duplicate _rows_, so a lead reappearing in
+   a later polling page is recognised as already known.
+2. **Version-guarded claiming** — prevents duplicate _work_ on one row. A worker
+   claims a lead inside a transaction with a conditional update matching
+   `(id, status, version)` and incrementing `version`. When two workers race,
+   exactly one update matches a row; the loser sees `count === 0` and backs off.
+
+A unique id alone would not be enough: it stops a second row, not a second
+worker acting on the same row.
+
+`claimedAt` / `claimedBy` make an abandoned claim (a worker that crashed
+mid-call) visible to a future reaper process.
+
+### `call_records`
+
+One row per actual call attempt — deliberately **not** merged into
+`lead_processing`:
+
+- a lead can fail eligibility checks before any call is placed (processing row,
+  no call row);
+- a lead may have several legitimate attempts if a future retry policy allows
+  them.
+
+`retellCallId` is unique so provider webhooks can be processed idempotently: a
+redelivered event resolves to the same row instead of creating a second one.
+
+### `integration_cursors`
+
+One row per upstream integration, holding the last safely processed polling
+position.
+
+**Advancement rule:** the cursor moves forward only _after_ every item on the
+corresponding page has been durably recorded. If the process restarts
+mid-page, we re-read from the last committed position. Re-reading is safe
+because the unique `leadId` makes re-ingestion a no-op.
+
+The row carries both an opaque `cursor` and a `watermarkAt` timestamp because
+the Lead API's pagination and `since` semantics are **not yet verified**. The
+correct field will be chosen in Phase 2 against the real contract; they are not
+assumed to be interchangeable.
+
+## Lead API integration (Phase 2, read-only)
+
+Base URL `https://guided-boost.lovable.app`, routes under `/api/crm/`. Every
+request carries `X-Lead-API-Key`, read from validated configuration and never
+logged.
+
+**The caller's key is read-only, and Phase 2 implements no writes at all.** Only
+three GET endpoints are used:
+
+| Endpoint                           | Purpose                                                        |
+| ---------------------------------- | -------------------------------------------------------------- |
+| `GET /api/crm/leads`               | incremental listing; discovery                                 |
+| `GET /api/crm/leads/<id>`          | lead detail, corrections, questionnaire answers, phone verdict |
+| `GET /api/crm/persons/<personKey>` | person history for call context                                |
+
+`GET /api/crm/search` and `GET /api/crm/emails` are deliberately unused: the
+listing plus detail covers the polling workflow, and neither contract has been
+verified against a real response.
+
+### `since`, `cursor` and `nextCursor`
+
+Three different things, never substituted for one another:
+
+- **`since`** - an ISO timestamp selecting leads changed since that moment. Used
+  only on the **first request of a run**, seeded from the durable watermark.
+- **`cursor`** - an opaque pagination token, passed back **exactly** as the API
+  returned it. Used for every request after the first.
+- **`nextCursor`** - the response field. Non-null means another page exists.
+
+Two guards sit around this. A `nextCursor` equal to the cursor we just sent
+would loop forever, so the run stops with a contract error instead. And a hard
+page bound (`LEAD_POLL_MAX_PAGES`) caps any single run; the next run resumes
+from the stored cursor, so nothing is lost.
+
+The listing has no documented key name for the rows array. Rather than guess
+one, the parser requires the response to contain exactly one top-level array and
+uses that; zero or several is ambiguous and fails loudly with the observed key
+names. **A malformed or unexpected response is never treated as an empty page** -
+that would silently skip leads.
+
+### How a new lead is distinguished from a changed one
+
+This is the heart of the phase, because the listing returns **new and changed**
+inquiries: a note, correction, assignment or status change all bump
+`updated_at`. Appearing in a page is never by itself a reason to call.
+
+Each row is judged in order, and the first rule that matches wins:
+
+| #   | Check                                          | Outcome when it fails                                              |
+| --- | ---------------------------------------------- | ------------------------------------------------------------------ |
+| 1   | `is_deleted`                                   | `SKIPPED` / `lead_deleted`                                         |
+| 2   | `is_lead === true`                             | `SKIPPED` / `not_a_lead`, or `NEEDS_REVIEW` if the field is absent |
+| 3   | `lead_status` not in the blocklist             | `SKIPPED` / `status_blocked`                                       |
+| 4   | not seen during the bootstrap run              | `SKIPPED` / `known_before_bootstrap`                               |
+| 5   | created within `LEAD_NEW_LEAD_MAX_AGE_MINUTES` | `SKIPPED` / `not_a_new_inquiry`                                    |
+| 6   | `LEAD_ELIGIBILITY_AUTO_ENABLED`                | `NEEDS_REVIEW` / `awaiting_new_lead_rule_confirmation`             |
+| 7   | readable, validated E.164 phone verdict        | `SKIPPED` / `phone_not_validated`, or `NEEDS_REVIEW` if unreadable |
+
+Two deliberate safety properties:
+
+- **Bootstrap protection.** On the very first poll no durable watermark exists,
+  so every lead the API returns is pre-existing. Treating those as new would
+  dial the entire back catalogue. Instead the first run records them all as
+  `known_before_bootstrap` and sets `bootstrapCompletedAt`; only leads arriving
+  afterwards can ever be eligible.
+- **The master safety switch.** `LEAD_ELIGIBILITY_AUTO_ENABLED` defaults to
+  **false**, so nothing is ever marked `ELIGIBLE` automatically. It stays off
+  until the creation-timestamp contract is confirmed (see _Open contract
+  questions_). A lead that passes every other check lands in `NEEDS_REVIEW`.
+
+### What happens to a skipped lead
+
+Nothing further, and the decision is permanent. The processing record keeps
+`status`, `decisionReason` and a short non-personal `decisionDetail`, so any
+skip can be explained later without storing the lead's data.
+
+Crucially, a decision is recorded **once**. `recordLeadDecision` only updates a
+row still in `PENDING`, which means a later note, correction or status change
+can never promote an old lead back into the calling queue - the exact failure
+mode the product owner ruled out.
+
+### Durability
+
+The order within a page is strict: fetch, then decide and record **every** row,
+and only then advance the cursor. A crash mid-page leaves the cursor where it
+was, the page is re-read next run, and the unique `leadId` makes re-ingestion a
+no-op. The watermark also never moves backwards, so an out-of-order page cannot
+rewind progress.
+
+A transient failure while fetching call context stops the run and leaves the
+lead `PENDING` for the next poll, rather than marking it eligible with missing
+context. A permanent 4xx is recorded as `NEEDS_REVIEW` so it is not retried
+forever.
+
+## Safety rules encoded in the design
+
+These are deliberate constraints, not oversights:
+
+- **Never auto-retry an uncertain outbound call.** `requeueForRetry()` refuses
+  to act on a lead in the `CALLING` state. An in-flight call request may already
+  have reached a real customer; retrying it would dial them twice. Those leads
+  are resolved by webhook reconciliation or a human decision.
+- **Never change a lead's status.** CRM writes will be limited to the authorized
+  note and assignment workflows.
+- **Only new leads are called.** Appearing in a later polling response is not a
+  reason to call an old lead.
+- **No sensitive data at rest by default.** No transcripts, recordings, passport
+  details, or payment information. A retention policy is agreed before any
+  additional sensitive field is added. `summary` is a short agent summary, not a
+  transcript.
+- **Validated E.164 numbers only.** A future call path uses the validated phone
+  number, never an unvalidated raw field.
+- **Secrets never reach the logs or the database.** The logger redacts auth
+  headers, keys, and personal fields; `sanitizeErrorMessage()` strips
+  credentials from anything stored in `lastError`.
+
+## Planned integration flow
+
+```
+            ┌──────────────────────────────────────────────┐
+            │ Phase 2 — poll the Lead API for NEW leads    │
+            │ read integration_cursors → fetch page →      │
+            │ record leads → advance cursor only after     │
+            │ the page is durably recorded                 │
+            └──────────────────────────────────────────────┘
+                              ↓
+            ┌──────────────────────────────────────────────┐
+            │ claim a lead atomically (version guard)      │
+            │ fetch lead details + person history          │
+            │ verify eligibility + validated E.164 number  │
+            └──────────────────────────────────────────────┘
+                              ↓
+            ┌──────────────────────────────────────────────┐
+            │ Phase 3 — Retell call                        │
+            │ create call_record → initiate → map          │
+            │ retellCallId → authenticated webhook →       │
+            │ idempotent event processing → outcome        │
+            └──────────────────────────────────────────────┘
+                              ↓
+            ┌──────────────────────────────────────────────┐
+            │ Phase 4 — Calendly                           │
+            │ availability → confirmed booking → route to  │
+            │ the existing rep, or assign an agent only    │
+            │ when unassigned AND the booking succeeded    │
+            └──────────────────────────────────────────────┘
+                              ↓
+            ┌──────────────────────────────────────────────┐
+            │ Phase 5 — CRM workflow                       │
+            │ exactly one plain-text note per call         │
+            │ documented assignment workflow               │
+            │ never change lead status                     │
+            └──────────────────────────────────────────────┘
+```
+
+The conversation uses existing travel-form answers as context: known details are
+confirmed naturally rather than re-asked, and the agent only gathers what is
+missing or genuinely useful.
+
+## Operational surface
+
+| Endpoint            | Purpose   | Behaviour                                                 |
+| ------------------- | --------- | --------------------------------------------------------- |
+| `GET /health`       | Liveness  | 200 while the process can serve requests; touches nothing |
+| `GET /health/ready` | Readiness | 200 when PostgreSQL answers `SELECT 1`, else 503          |
+
+They are separate on purpose: an orchestrator should **restart** on liveness
+failure but only **stop routing traffic** on readiness failure. A transient
+database outage must not trigger a restart loop.
+
+Readiness returns `up`/`down` only. Connection strings, SQL, and stack traces
+are logged internally and never returned.
+
+Both are unauthenticated: they expose no data, and probes typically cannot
+present credentials. Future administrative and write endpoints — including the
+Retell webhook — must be authenticated before they are added.
+
+## Error handling
+
+Every failure leaves through one middleware and takes a consistent shape:
+
+```json
+{
+  "error": {
+    "code": "NOT_FOUND",
+    "message": "Route GET /nope not found",
+    "requestId": "4728aec0-582e-425f-a2b8-07cd3aae1ad8"
+  }
+}
+```
+
+Only `AppError` messages are considered safe to return. Anything unexpected
+becomes a generic `INTERNAL_ERROR` 500 — the real message and stack are logged
+against the `requestId` and never sent to the client.
+
+## Contract status
+
+Verified on 2026-10-14 against the live API with read-only GETs (2400 rows
+sampled over 90 days). No write was made.
+
+**Resolved:**
+
+| Question           | Answer                                   |
+| ------------------ | ---------------------------------------- |
+| Rows key           | `leads`                                  |
+| Creation timestamp | `created_at`, present on every row       |
+| `is_lead`          | real column; `true` on 118 of 2400 rows  |
+| `lead_status`      | real column; `null` on 2293 of 2400 rows |
+| Phone verdict      | `phone_e164` + `valid`, not `e164`       |
+| Travel details     | in `answers[]`, not in lead columns      |
+
+The original reader looked for `e164` and would have marked every lead
+unreadable. That failed safe - `unreadable` routes to `NEEDS_REVIEW`, so no call
+could have been placed on a number it could not read. This is the behaviour the
+"fail safe, never guess" rule was there to produce.
+
+**Still unverified, each handled conservatively:**
+
+1. **`caller_hold_until` semantics.** The column exists on every row but was
+   never populated in the sample. Read as "a future timestamp means do not
+   call"; an unparsable value routes to `NEEDS_REVIEW`.
+2. **`profile.salesAgent` shape.** Null throughout the sample. Both a bare
+   string and an object with `email` are accepted.
+3. **Which statuses should block an initial call.** `Newsletter` is the most
+   common non-null status (67 rows) and is **not** currently blocked. `Closed`
+   was specified but does not exist in the legend or the data.
+4. **How recent counts as "new".** 0 leads were created within the last hour and
+   20 within 24 hours, so the 60-minute default assumes polling really runs
+   every minute.
+
+**Carried into later phases:**
+
+- Hold acquisition and release semantics, beyond reading `caller_hold_until`.
+  The workflow doc confirms a 10-minute hold that ends when the caller reports
+  an attempt or expires automatically; it does not confirm that
+  `caller_hold_until` is how that hold is exposed via this API. The field name
+  is our own inference, isolated behind one conservative eligibility rule (see
+  `CALLER_HOLD_COLUMN` in `leadEligibility.service.ts`) rather than presented as
+  a settled contract.
+- The call-record and note endpoints, and the required caller-identity headers.
+  The Lead API documentation gives inconsistent example `X-Agent-Email`
+  addresses for POST requests; no canonical caller identity has been confirmed.
+  This blocks nothing today - no write code exists - but must be resolved
+  before Phase 5 implements the note/assignment writes.
+- Retell webhook event names, payload shape, and signature scheme.
+- Calendly event types and per-agent availability configuration.

@@ -1,0 +1,332 @@
+import { describe, expect, it, vi } from 'vitest';
+import { parseEnv } from '../src/config/env.js';
+import {
+  evaluateListEligibility,
+  evaluatePhoneEligibility,
+  readPhoneVerdict,
+} from '../src/services/leadEligibility.service.js';
+import type { LeadListRow } from '../src/integrations/leadApi/schemas.js';
+
+vi.mock('../src/lib/prisma.js', () => ({
+  prisma: { $queryRaw: vi.fn() },
+  disconnectPrisma: vi.fn(),
+}));
+
+const NOW = new Date('2026-10-14T12:00:00.000Z');
+
+function config(overrides: Record<string, string> = {}) {
+  return parseEnv({
+    DATABASE_URL: 'postgresql://u:p@localhost:5432/db',
+    // Default-off in production; most tests opt in to exercise the rules past it.
+    LEAD_ELIGIBILITY_AUTO_ENABLED: 'true',
+    ...overrides,
+  });
+}
+
+/** A row that passes every verified check, 10 minutes old. */
+function freshRow(overrides: Record<string, unknown> = {}): LeadListRow {
+  return {
+    id: 'lead-1',
+    updated_at: '2026-10-14T11:55:00.000Z',
+    created_at: '2026-10-14T11:50:00.000Z',
+    person_key: 'lead:lead-1',
+    is_deleted: false,
+    is_lead: true,
+    lead_status: 'New Lead',
+    ...overrides,
+  };
+}
+
+function evaluate(row: LeadListRow, overrides: Record<string, string> = {}, bootstrap = false) {
+  return evaluateListEligibility({
+    row,
+    now: NOW,
+    isBootstrapRun: bootstrap,
+    config: config(overrides),
+  });
+}
+
+describe('new vs changed leads', () => {
+  it('accepts a genuinely new inquiry', () => {
+    expect(evaluate(freshRow())).toEqual({ outcome: 'ELIGIBLE', reason: 'eligible' });
+  });
+
+  it('skips an old inquiry whose updated_at was merely bumped', () => {
+    // Created 30 days ago, updated a minute ago - e.g. a note or status change.
+    const row = freshRow({
+      created_at: '2026-09-14T11:50:00.000Z',
+      updated_at: '2026-10-14T11:59:00.000Z',
+    });
+
+    const decision = evaluate(row);
+
+    expect(decision.outcome).toBe('SKIPPED');
+    expect(decision.reason).toBe('not_a_new_inquiry');
+  });
+
+  it('skips a lead just outside the newness window', () => {
+    const row = freshRow({ created_at: '2026-10-14T10:30:00.000Z' }); // 90 min old
+
+    expect(evaluate(row, { LEAD_NEW_LEAD_MAX_AGE_MINUTES: '60' }).reason).toBe('not_a_new_inquiry');
+  });
+
+  it('accepts a lead just inside the newness window', () => {
+    const row = freshRow({ created_at: '2026-10-14T11:05:00.000Z' }); // 55 min old
+
+    expect(evaluate(row, { LEAD_NEW_LEAD_MAX_AGE_MINUTES: '60' }).outcome).toBe('ELIGIBLE');
+  });
+
+  it('refuses to decide when no creation timestamp exists', () => {
+    const row = freshRow();
+    delete (row as Record<string, unknown>)['created_at'];
+
+    const decision = evaluate(row);
+
+    // This is the unresolved contract detail; it must never become ELIGIBLE.
+    expect(decision.outcome).toBe('NEEDS_REVIEW');
+    expect(decision.reason).toBe('created_at_field_absent');
+  });
+
+  it('refuses to decide when the creation timestamp is unparsable', () => {
+    expect(evaluate(freshRow({ created_at: 'not-a-date' })).reason).toBe('created_at_field_absent');
+  });
+
+  it('treats a null creation timestamp as undecidable', () => {
+    expect(evaluate(freshRow({ created_at: null })).outcome).toBe('NEEDS_REVIEW');
+  });
+});
+
+describe('the master safety switch', () => {
+  it('holds an otherwise-eligible lead for review while auto-eligibility is off', () => {
+    const decision = evaluate(freshRow(), { LEAD_ELIGIBILITY_AUTO_ENABLED: 'false' });
+
+    expect(decision.outcome).toBe('NEEDS_REVIEW');
+    expect(decision.reason).toBe('awaiting_new_lead_rule_confirmation');
+  });
+
+  it('is off by default, so a default deployment can never auto-call', () => {
+    const defaults = parseEnv({ DATABASE_URL: 'postgresql://u:p@localhost:5432/db' });
+
+    expect(defaults.LEAD_ELIGIBILITY_AUTO_ENABLED).toBe(false);
+    expect(
+      evaluateListEligibility({ row: freshRow(), now: NOW, config: defaults }).outcome,
+    ).not.toBe('ELIGIBLE');
+  });
+
+  it('still skips clearly ineligible leads while the switch is off', () => {
+    // The switch withholds approval; it does not suppress real skip reasons.
+    const decision = evaluate(freshRow({ is_deleted: true }), {
+      LEAD_ELIGIBILITY_AUTO_ENABLED: 'false',
+    });
+
+    expect(decision).toEqual({ outcome: 'SKIPPED', reason: 'lead_deleted' });
+  });
+});
+
+describe('bootstrap protection', () => {
+  it('never treats a lead seen during the first poll as new', () => {
+    const decision = evaluate(freshRow(), {}, true);
+
+    expect(decision).toEqual({ outcome: 'SKIPPED', reason: 'known_before_bootstrap' });
+  });
+
+  it('applies bootstrap protection even to a brand-new-looking lead', () => {
+    const row = freshRow({ created_at: NOW.toISOString() });
+
+    expect(evaluate(row, {}, true).reason).toBe('known_before_bootstrap');
+  });
+});
+
+describe('contact eligibility', () => {
+  it('skips a deleted lead', () => {
+    expect(evaluate(freshRow({ is_deleted: true }))).toEqual({
+      outcome: 'SKIPPED',
+      reason: 'lead_deleted',
+    });
+  });
+
+  it('skips a record that is not a lead', () => {
+    expect(evaluate(freshRow({ is_lead: false })).reason).toBe('not_a_lead');
+  });
+
+  it('skips a record whose is_lead is null (a visit or unvalidated number)', () => {
+    expect(evaluate(freshRow({ is_lead: null })).reason).toBe('not_a_lead');
+  });
+
+  it('refuses to decide when is_lead is absent', () => {
+    const row = freshRow();
+    delete (row as Record<string, unknown>)['is_lead'];
+
+    expect(evaluate(row)).toMatchObject({
+      outcome: 'NEEDS_REVIEW',
+      reason: 'is_lead_field_absent',
+    });
+  });
+
+  it.each(['Unsubscribe', 'Unsubscribe (M)', 'Post Trip', 'Closed', 'Deleted'])(
+    'skips a lead with status %s',
+    (status) => {
+      const decision = evaluate(freshRow({ lead_status: status }));
+
+      expect(decision.outcome).toBe('SKIPPED');
+      expect(decision.reason).toBe('status_blocked');
+    },
+  );
+
+  it('matches blocked statuses regardless of case and padding', () => {
+    expect(evaluate(freshRow({ lead_status: '  unsubscribe  ' })).reason).toBe('status_blocked');
+  });
+
+  it('honours a configured blocklist', () => {
+    const decision = evaluate(freshRow({ lead_status: 'Booked' }), {
+      LEAD_BLOCKED_STATUSES: 'Booked,Refunded',
+    });
+
+    expect(decision.reason).toBe('status_blocked');
+  });
+
+  it('allows a null lead_status, which is the common live case', () => {
+    // 2293 of 2400 sampled rows had lead_status null - no status set yet.
+    expect(evaluate(freshRow({ lead_status: null })).outcome).toBe('ELIGIBLE');
+  });
+
+  it('refuses to decide when lead_status is absent', () => {
+    const row = freshRow();
+    delete (row as Record<string, unknown>)['lead_status'];
+
+    expect(evaluate(row).reason).toBe('lead_status_field_absent');
+  });
+
+  it('checks deletion before anything else', () => {
+    // A deleted row missing every other field is still a clean skip.
+    const row = {
+      id: 'x',
+      updated_at: '2026-10-14T11:00:00.000Z',
+      is_deleted: true,
+    } as LeadListRow;
+
+    expect(evaluate(row).reason).toBe('lead_deleted');
+  });
+});
+
+describe('caller holds', () => {
+  it('skips a lead whose caller hold is still active', () => {
+    const decision = evaluate(freshRow({ caller_hold_until: '2026-10-14T18:00:00.000Z' }));
+
+    expect(decision.outcome).toBe('SKIPPED');
+    expect(decision.reason).toBe('caller_hold_active');
+  });
+
+  it('ignores a hold that has already expired', () => {
+    expect(evaluate(freshRow({ caller_hold_until: '2026-10-14T06:00:00.000Z' })).outcome).toBe(
+      'ELIGIBLE',
+    );
+  });
+
+  it('treats a null hold as no hold', () => {
+    expect(evaluate(freshRow({ caller_hold_until: null })).outcome).toBe('ELIGIBLE');
+  });
+
+  it('refuses to decide when the hold value is unparsable', () => {
+    const decision = evaluate(freshRow({ caller_hold_until: 'soon' }));
+
+    expect(decision.outcome).toBe('NEEDS_REVIEW');
+    expect(decision.reason).toBe('caller_hold_active');
+  });
+});
+
+describe('phone verdict', () => {
+  /** The confirmed live shape of a validated number. */
+  const validVerdict = {
+    phone_raw: '07700900123',
+    phone_e164: '+447700900123',
+    phone_best: '+447700900123',
+    valid: true,
+    tier: 'live_mobile',
+    line_type: 'mobile',
+    country_iso: 'GB',
+    lookup_status: 'ok',
+  };
+
+  it('accepts the confirmed validated shape', () => {
+    expect(readPhoneVerdict(validVerdict)).toEqual({
+      status: 'valid',
+      e164: '+447700900123',
+      tier: 'live_mobile',
+      lineType: 'mobile',
+    });
+  });
+
+  it('rejects the confirmed "never validated" shape', () => {
+    // Live data: an unvalidated number has valid null and tier none.
+    const verdict = readPhoneVerdict({
+      phone_raw: '07700900123',
+      phone_e164: null,
+      valid: null,
+      tier: 'none',
+    });
+
+    expect(verdict.status).toBe('invalid');
+    expect(verdict).toMatchObject({ detail: expect.stringContaining('not validated') as string });
+  });
+
+  it('never falls back to phone_raw or phone_best', () => {
+    const verdict = readPhoneVerdict({
+      phone_raw: '07700900123',
+      phone_best: '+447700900123',
+      phone_e164: null,
+      valid: null,
+    });
+
+    expect(verdict.status).toBe('invalid');
+    expect(JSON.stringify(verdict)).not.toContain('447700900123');
+  });
+
+  it('rejects a number explicitly marked invalid', () => {
+    expect(readPhoneVerdict({ ...validVerdict, valid: false }).status).toBe('invalid');
+  });
+
+  it('rejects valid=true with a malformed E.164 value', () => {
+    expect(readPhoneVerdict({ ...validVerdict, phone_e164: '0770-0900' }).status).toBe('invalid');
+  });
+
+  it('rejects a lookup that did not complete cleanly', () => {
+    const verdict = readPhoneVerdict({ ...validVerdict, lookup_status: 'failed' });
+
+    expect(verdict).toMatchObject({ status: 'invalid' });
+  });
+
+  it('reports an unrecognised shape as unreadable, with key names only', () => {
+    const verdict = readPhoneVerdict({ number: '+447700900123', verdict: 'ok' });
+
+    expect(verdict.status).toBe('unreadable');
+    expect(verdict).toMatchObject({ observedKeys: ['number', 'verdict'] });
+    expect(JSON.stringify(verdict)).not.toContain('447700900123');
+  });
+
+  it('treats a missing phone verdict as unreadable rather than valid', () => {
+    expect(readPhoneVerdict(undefined).status).toBe('unreadable');
+    expect(readPhoneVerdict(null).status).toBe('unreadable');
+    expect(readPhoneVerdict('+447700900123').status).toBe('unreadable');
+  });
+
+  it('routes an unreadable verdict to review, never to a call', () => {
+    const decision = evaluatePhoneEligibility({ phone: { number: '+44770' } });
+
+    expect(decision.outcome).toBe('NEEDS_REVIEW');
+    expect(decision.reason).toBe('phone_verdict_unreadable');
+    expect(decision.detail).not.toContain('44770');
+  });
+
+  it('skips a lead whose number failed validation', () => {
+    const decision = evaluatePhoneEligibility({
+      phone: { phone_e164: null, valid: null, tier: 'none' },
+    });
+
+    expect(decision).toMatchObject({ outcome: 'SKIPPED', reason: 'phone_not_validated' });
+  });
+
+  it('passes a lead with a validated number', () => {
+    expect(evaluatePhoneEligibility({ phone: validVerdict }).outcome).toBe('ELIGIBLE');
+  });
+});

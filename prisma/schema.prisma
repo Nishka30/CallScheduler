@@ -1,0 +1,185 @@
+// AI Caller - Phase 1 data model.
+//
+// Scope rules baked into this schema:
+//   * We store PROCESSING STATE and CALL METADATA only.
+//   * The Lead API remains the source of truth for lead/person/CRM data, so we
+//     deliberately do not mirror lead fields here.
+//   * No transcripts, recordings, passport, or payment data. Any additional
+//     sensitive field must be preceded by an agreed retention policy.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+/// Lifecycle of a lead inside the AI Caller workflow.
+enum ProcessingStatus {
+  PENDING // discovered, eligibility not yet decided
+  ELIGIBLE // passed every verified check; ready for a future call
+  SKIPPED // failed a verified eligibility rule; terminal, never called
+  NEEDS_REVIEW // undecidable on verified fields; held for a human decision
+  PROCESSING // claimed by a worker
+  CALLING // an outbound call attempt is in flight
+  COMPLETED // workflow finished for this lead
+  FAILED // terminal failure; requires an explicit retry decision
+}
+
+/// Lifecycle of a single outbound call attempt.
+enum CallStatus {
+  PENDING // record created, provider not yet contacted
+  INITIATED // provider accepted the request
+  IN_PROGRESS // call connected
+  COMPLETED // call ended normally
+  FAILED // call could not be placed or ended abnormally
+  NO_ANSWER
+  BUSY
+  CANCELED
+  UNKNOWN // provider state not yet reconciled
+}
+
+/// Structured business result of a completed call attempt.
+enum CallOutcome {
+  INTERESTED
+  NOT_INTERESTED
+  APPOINTMENT_BOOKED
+  CALLBACK_REQUESTED
+  VOICEMAIL
+  WRONG_NUMBER
+  DO_NOT_CONTACT
+  NOT_REACHED
+  UNKNOWN
+}
+
+/// Tracks whether a lead has entered or completed the AI Caller workflow.
+///
+/// Duplicate-call prevention relies on BOTH the unique `leadId` and the
+/// claim columns below. A unique id alone only prevents duplicate ROWS; it does
+/// not stop two workers acting on the same row. A future worker must claim a
+/// lead inside a transaction with a conditional update that matches on
+/// (`status`, `version`) and bumps `version`, so exactly one worker wins.
+model LeadProcessing {
+  id String @id @default(uuid()) @db.Uuid
+
+  /// External Lead API identifier. One processing record per lead.
+  leadId String @unique @db.VarChar(128)
+
+  status       ProcessingStatus @default(PENDING)
+  attemptCount Int              @default(0)
+
+  /// Optimistic-concurrency token. Bumped on every claim/state transition.
+  version Int @default(0)
+
+  /// Set when a worker claims the lead; cleared when it releases the claim.
+  /// A stale `claimedAt` is how a future reaper detects an abandoned claim.
+  claimedAt DateTime? @db.Timestamptz(3)
+  /// Opaque worker/instance identifier that currently holds the claim.
+  claimedBy String?   @db.VarChar(128)
+
+  lastAttemptAt DateTime? @db.Timestamptz(3)
+
+  /// Stable machine-readable eligibility code, e.g. `status_blocked`.
+  /// Explains why a lead was made eligible or skipped without storing any
+  /// personal data.
+  decisionReason String? @db.VarChar(64)
+
+  /// Short non-personal elaboration on `decisionReason`.
+  decisionDetail String? @db.VarChar(300)
+
+  /// When the eligibility decision was last taken.
+  decidedAt DateTime? @db.Timestamptz(3)
+
+  /// The `updated_at` of the lead row that produced the current decision.
+  /// Lets us see that a later appearance was only an update, not a new inquiry.
+  leadUpdatedAt DateTime? @db.Timestamptz(3)
+
+  /// Short, sanitized failure reason. Never a raw provider payload or stack trace.
+  lastError String? @db.VarChar(500)
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  @@index([status, createdAt])
+  @@index([claimedAt])
+  @@index([decisionReason])
+  @@map("lead_processing")
+}
+
+/// One record per actual call attempt.
+///
+/// Intentionally separate from LeadProcessing: a lead can fail before any call
+/// is placed (processing row, no call row), and a lead may have several
+/// legitimate attempts if a future retry policy explicitly allows them.
+model CallRecord {
+  id String @id @default(uuid()) @db.Uuid
+
+  /// External Lead API identifier. Not a foreign key: a call attempt is
+  /// meaningful even if the processing row is later archived.
+  leadId String @db.VarChar(128)
+
+  /// Optional external person identifier from the Lead API.
+  personKey String? @db.VarChar(128)
+
+  /// Provider call id, available only once the provider accepts the request.
+  /// Unique so webhook events can be processed idempotently.
+  retellCallId String? @unique @db.VarChar(128)
+
+  status  CallStatus   @default(PENDING)
+  outcome CallOutcome?
+
+  /// Short agent-generated summary. Not a transcript.
+  summary String? @db.VarChar(2000)
+
+  startedAt DateTime? @db.Timestamptz(3)
+  endedAt   DateTime? @db.Timestamptz(3)
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  @@index([leadId, createdAt])
+  @@index([status])
+  @@index([createdAt])
+  @@map("call_records")
+}
+
+/// Last safely processed polling position for an upstream integration.
+///
+/// Advancement rule (enforced in code, not by the schema): the cursor is only
+/// moved forward AFTER every item on the corresponding page has been durably
+/// recorded. On restart we re-read from the last committed position; duplicate
+/// reads are made harmless by the unique `leadId` on LeadProcessing.
+///
+/// The exact meaning of `cursor` vs `watermarkAt` is deliberately left open:
+/// the Lead API's pagination and `since` semantics are unverified, so both an
+/// opaque token and a timestamp watermark are available until the real contract
+/// is confirmed in Phase 2.
+model IntegrationCursor {
+  id String @id @default(uuid()) @db.Uuid
+
+  /// Integration key, e.g. "LEAD_API". One cursor row per integration.
+  source String @unique @db.VarChar(64)
+
+  /// Opaque provider pagination cursor, if the API uses one.
+  cursor String? @db.VarChar(512)
+
+  /// Timestamp watermark, if the API pages by a `since`-style parameter.
+  watermarkAt DateTime? @db.Timestamptz(3)
+
+  /// When the cursor was last advanced after a fully processed page.
+  lastAdvancedAt DateTime? @db.Timestamptz(3)
+
+  /// Set once the first (bootstrap) poll has completed.
+  ///
+  /// Leads visible during that first poll pre-date the AI Caller and are
+  /// recorded as SKIPPED/`known_before_bootstrap` rather than treated as new.
+  /// Until this is set, no lead can become ELIGIBLE.
+  bootstrapCompletedAt DateTime? @db.Timestamptz(3)
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  @@map("integration_cursors")
+}
