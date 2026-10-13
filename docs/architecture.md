@@ -151,15 +151,15 @@ inquiries: a note, correction, assignment or status change all bump
 
 Each row is judged in order, and the first rule that matches wins:
 
-| #   | Check                                          | Outcome when it fails                                              |
-| --- | ---------------------------------------------- | ------------------------------------------------------------------ |
-| 1   | `is_deleted`                                   | `SKIPPED` / `lead_deleted`                                         |
-| 2   | `is_lead === true`                             | `SKIPPED` / `not_a_lead`, or `NEEDS_REVIEW` if the field is absent |
-| 3   | `lead_status` not in the blocklist             | `SKIPPED` / `status_blocked`                                       |
-| 4   | not seen during the bootstrap run              | `SKIPPED` / `known_before_bootstrap`                               |
-| 5   | created within `LEAD_NEW_LEAD_MAX_AGE_MINUTES` | `SKIPPED` / `not_a_new_inquiry`                                    |
-| 6   | `LEAD_ELIGIBILITY_AUTO_ENABLED`                | `NEEDS_REVIEW` / `awaiting_new_lead_rule_confirmation`             |
-| 7   | readable, validated E.164 phone verdict        | `SKIPPED` / `phone_not_validated`, or `NEEDS_REVIEW` if unreadable |
+| #   | Check                                                    | Outcome when it fails                                              |
+| --- | -------------------------------------------------------- | ------------------------------------------------------------------ |
+| 1   | `is_deleted`                                             | `SKIPPED` / `lead_deleted`                                         |
+| 2   | `is_lead === true`                                       | `SKIPPED` / `not_a_lead`, or `NEEDS_REVIEW` if the field is absent |
+| 3   | `lead_status` not one of the three documented exclusions | `SKIPPED` / `status_blocked`                                       |
+| 4   | not seen during the bootstrap run                        | `SKIPPED` / `known_before_bootstrap`                               |
+| 5   | `created_at` present and parsable                        | `NEEDS_REVIEW` / `created_at_field_absent`                         |
+| 6   | `LEAD_ELIGIBILITY_AUTO_ENABLED`                          | `NEEDS_REVIEW` / `awaiting_new_lead_rule_confirmation`             |
+| 7   | readable, validated E.164 phone verdict                  | `SKIPPED` / `phone_not_validated`, or `NEEDS_REVIEW` if unreadable |
 
 Two deliberate safety properties:
 
@@ -169,9 +169,33 @@ Two deliberate safety properties:
   `known_before_bootstrap` and sets `bootstrapCompletedAt`; only leads arriving
   afterwards can ever be eligible.
 - **The master safety switch.** `LEAD_ELIGIBILITY_AUTO_ENABLED` defaults to
-  **false**, so nothing is ever marked `ELIGIBLE` automatically. It stays off
-  until the creation-timestamp contract is confirmed (see _Open contract
-  questions_). A lead that passes every other check lands in `NEEDS_REVIEW`.
+  **false**, so nothing is ever marked `ELIGIBLE` automatically. A lead that
+  passes every other check lands in `NEEDS_REVIEW` until the product owner
+  turns calling on.
+
+**Deliberately absent from this table: a fixed age cutoff.** An earlier version
+compared `created_at` against a 60-minute window and skipped anything older.
+That rule was not supported by the documented workflow and was actively wrong:
+a poller that fell behind schedule would wrongly skip a genuinely new lead once
+it crossed the cutoff, even though nothing had ever decided it before. The
+thing that actually prevents an old, merely-updated lead from being treated as
+new is structural, not a timestamp comparison: `recordLeadDecision` (in the
+repository layer) only ever transitions a lead out of `PENDING` once, and
+bootstrap protection handles everything present before polling began. Together
+those two are sufficient; `created_at` only needs to exist and parse.
+
+**Also deliberately absent: a `caller_hold_until` gate.** Per the documented
+workflow, a hold reserves a new lead FOR the AI Caller - it blocks a human
+sales agent from claiming it through the CRM for the hold's duration (10
+minutes, confirmed directly by the product owner) - so its presence is a
+reason to call soon, not a reason to skip. An earlier version of this check
+treated a future `caller_hold_until` as a skip condition, which had the logic
+backwards. The value is still carried into the call context
+(`LeadCallContext.callerHoldUntil`) for a future caller to use when timing an
+attempt, but it is not used as an eligibility gate. We still cannot confirm
+that `caller_hold_until` is literally the field that implements this hold -
+every sampled row had it `null` - so nothing is built on that specific mapping
+beyond passing the value through.
 
 ### What happens to a skipped lead
 
@@ -302,7 +326,7 @@ against the `requestId` and never sent to the client.
 Verified on 2026-10-14 against the live API with read-only GETs (2400 rows
 sampled over 90 days). No write was made.
 
-**Resolved:**
+**Resolved by live data:**
 
 | Question           | Answer                                   |
 | ------------------ | ---------------------------------------- |
@@ -313,38 +337,39 @@ sampled over 90 days). No write was made.
 | Phone verdict      | `phone_e164` + `valid`, not `e164`       |
 | Travel details     | in `answers[]`, not in lead columns      |
 
-The original reader looked for `e164` and would have marked every lead
-unreadable. That failed safe - `unreadable` routes to `NEEDS_REVIEW`, so no call
-could have been placed on a number it could not read. This is the behaviour the
-"fail safe, never guess" rule was there to produce.
+**Resolved by the product owner directly:**
 
-**Still unverified, each handled conservatively:**
+| Question                         | Answer                                                                                                                                                                       |
+| -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| How recent counts as "new"       | No fixed window - new means "not present at bootstrap, never decided before" (see above)                                                                                     |
+| Which statuses block calling     | Exactly `Unsubscribe`, `Closed`, `Post Trip` - no others added without confirmation                                                                                          |
+| Newsletter records               | Not excluded unless confirmed                                                                                                                                                |
+| Canonical write identity         | Confirmed as `ai-caller@himalayanwonders.com` for the future `X-Agent-Email` header, resolving the Lead API doc's inconsistent examples - not used yet, no write code exists |
+| Hold duration (business concept) | 10 minutes, confirmed directly; the hold is FOR the AI Caller, not against it                                                                                                |
 
-1. **`caller_hold_until` semantics.** The column exists on every row but was
-   never populated in the sample. Read as "a future timestamp means do not
-   call"; an unparsable value routes to `NEEDS_REVIEW`.
+**Still unverified - the field-to-concept mapping, not the business rule:**
+
+1. **`caller_hold_until` as the hold's API representation.** The _business
+   concept_ (a 10-minute hold reserving the lead for the AI Caller) is
+   confirmed by the workflow documentation and the product owner. That this
+   specific column is how it is exposed via this API is still this codebase's
+   own inference from the field name - the column has been `null` in every
+   sampled row, so it has never actually been observed populated. The
+   corrected eligibility logic no longer depends on this guess being right:
+   the value is surfaced to the call context, never used to gate eligibility,
+   so a wrong mapping can only ever produce a context field that is empty when
+   it should not be - never a wrong skip or a wrong call.
 2. **`profile.salesAgent` shape.** Null throughout the sample. Both a bare
    string and an object with `email` are accepted.
-3. **Which statuses should block an initial call.** `Newsletter` is the most
-   common non-null status (67 rows) and is **not** currently blocked. `Closed`
-   was specified but does not exist in the legend or the data.
-4. **How recent counts as "new".** 0 leads were created within the last hour and
-   20 within 24 hours, so the 60-minute default assumes polling really runs
-   every minute.
 
 **Carried into later phases:**
 
-- Hold acquisition and release semantics, beyond reading `caller_hold_until`.
-  The workflow doc confirms a 10-minute hold that ends when the caller reports
-  an attempt or expires automatically; it does not confirm that
-  `caller_hold_until` is how that hold is exposed via this API. The field name
-  is our own inference, isolated behind one conservative eligibility rule (see
-  `CALLER_HOLD_COLUMN` in `leadEligibility.service.ts`) rather than presented as
-  a settled contract.
-- The call-record and note endpoints, and the required caller-identity headers.
-  The Lead API documentation gives inconsistent example `X-Agent-Email`
-  addresses for POST requests; no canonical caller identity has been confirmed.
-  This blocks nothing today - no write code exists - but must be resolved
-  before Phase 5 implements the note/assignment writes.
+- Hold acquisition and release semantics - specifically, what reports a caller
+  attempt and ends the hold early, and what endpoint (if any) that requires.
+  "Do not invent CRM endpoints or writes to manage the hold" remains the rule
+  until this is confirmed.
+- The call-record and note endpoints, and `ai-caller@himalayanwonders.com` as
+  the `X-Agent-Email` identity for those writes (now confirmed, but unused
+  until Phase 5).
 - Retell webhook event names, payload shape, and signature scheme.
 - Calendly event types and per-agent availability configuration.

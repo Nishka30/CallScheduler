@@ -118,6 +118,31 @@ describe('buildLeadCallContext', () => {
     expect(context.answers).toHaveLength(1);
   });
 
+  it('surfaces a parsable caller_hold_until verbatim', () => {
+    const context = buildLeadCallContext(
+      '1',
+      detail({ captured: { ...detail().captured, caller_hold_until: '2026-10-14T18:00:00.000Z' } }),
+    );
+
+    expect(context.callerHoldUntil).toBe('2026-10-14T18:00:00.000Z');
+  });
+
+  it('omits an unparsable caller_hold_until rather than passing it through', () => {
+    const context = buildLeadCallContext(
+      '1',
+      detail({ captured: { ...detail().captured, caller_hold_until: 'not-a-date' } }),
+    );
+
+    expect(context.callerHoldUntil).toBeUndefined();
+  });
+
+  it('omits caller_hold_until when absent, and never duplicates it into leadFields', () => {
+    const context = buildLeadCallContext('1', detail());
+
+    expect(context.callerHoldUntil).toBeUndefined();
+    expect(context.leadFields).not.toHaveProperty('caller_hold_until');
+  });
+
   it('includes the validated phone number and its verdict metadata', () => {
     const context = buildLeadCallContext('1', detail());
 

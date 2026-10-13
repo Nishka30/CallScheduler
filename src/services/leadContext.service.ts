@@ -1,5 +1,5 @@
 import type { LeadDetail, LeadListRow, PersonHistory } from '../integrations/leadApi/schemas.js';
-import { readPhoneVerdict } from './leadEligibility.service.js';
+import { parseTimestamp, readPhoneVerdict } from './leadEligibility.service.js';
 
 /**
  * One questionnaire answer from the lead's travel-form session.
@@ -39,6 +39,19 @@ export interface LeadCallContext {
   city?: string;
   /** Free-text the customer typed on the form. */
   freeText?: string;
+
+  /**
+   * `caller_hold_until`, verbatim, when present and parsable.
+   *
+   * Per the documented workflow, this reserves the lead for the AI Caller and
+   * blocks a human sales agent from claiming it through the CRM for the hold's
+   * duration - so its presence is informational timing for when a call should
+   * be attempted, not an eligibility gate (see `leadEligibility.service.ts`).
+   * We still cannot confirm this column is literally how that hold is
+   * exposed - every sampled row had it `null` - so this is carried through
+   * as-is and not acted upon here.
+   */
+  callerHoldUntil?: string;
 
   /** Travel intent, lifted from the confirmed questionnaire ids. */
   trek?: string;
@@ -98,6 +111,8 @@ const EXCLUDED_COLUMNS = new Set([
   'session_id',
   'visitor_id',
   'ac_contact_id',
+  // Surfaced explicitly as `callerHoldUntil`, not bulk-copied.
+  'caller_hold_until',
   // Attribution and click tracking.
   'attribution_source',
   'attribution_touch_at',
@@ -161,6 +176,11 @@ export function buildLeadCallContext(
 
   const freeText = read('free_text');
   if (freeText) context.freeText = freeText;
+
+  const callerHoldRaw = read('caller_hold_until');
+  if (callerHoldRaw && parseTimestamp(callerHoldRaw) !== null) {
+    context.callerHoldUntil = callerHoldRaw;
+  }
 
   const byId = new Map(answers.map((answer) => [answer.questionId, answer.answer]));
 
@@ -305,6 +325,8 @@ export function describeContextForLog(context: LeadCallContext): Record<string, 
     hasPersonKey: context.personKey !== undefined,
     hasValidatedPhone: context.phoneE164 !== undefined,
     phoneTier: context.phoneTier,
+    // A timestamp, not personal data - useful to see the call-attempt deadline.
+    callerHoldUntil: context.callerHoldUntil,
     hasName: context.customerName !== undefined,
     hasTrek: context.trek !== undefined,
     hasTiming: context.timing !== undefined,

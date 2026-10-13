@@ -127,13 +127,6 @@ const envSchema = z.object({
   ),
 
   /**
-   * How recently an inquiry must have been created to count as "new".
-   * Only consulted once the creation-timestamp field is confirmed; see
-   * `LEAD_ELIGIBILITY_AUTO_ENABLED`.
-   */
-  LEAD_NEW_LEAD_MAX_AGE_MINUTES: z.coerce.number().int().min(1).max(10_080).default(60),
-
-  /**
    * MASTER SAFETY SWITCH, default OFF.
    *
    * While false, no lead is ever marked ELIGIBLE automatically: candidates that
@@ -147,11 +140,14 @@ const envSchema = z.object({
   /**
    * Lead statuses that must never receive an initial AI call.
    *
-   * Defaults to the set confirmed in the project specification. Configurable so
-   * the product owner's answer on the remaining statuses is a config change
-   * rather than a code change.
+   * Defaults to exactly the three statuses the workflow documentation names:
+   * Unsubscribe, Closed, Post Trip. Other statuses observed live but never
+   * confirmed as exclusions (Newsletter, Unsubscribe (M), Deleted,
+   * Cancelled (NR), Dead Lead) are deliberately NOT included - adding them
+   * would be inventing a business rule rather than applying a documented one.
+   * Configurable so a confirmed addition is a config change, not a code change.
    */
-  LEAD_BLOCKED_STATUSES: commaList.default('Unsubscribe,Unsubscribe (M),Post Trip,Closed,Deleted'),
+  LEAD_BLOCKED_STATUSES: commaList.default('Unsubscribe,Closed,Post Trip'),
 });
 
 export type Env = z.infer<typeof envSchema>;

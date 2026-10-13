@@ -51,29 +51,21 @@ describe('new vs changed leads', () => {
     expect(evaluate(freshRow())).toEqual({ outcome: 'ELIGIBLE', reason: 'eligible' });
   });
 
-  it('skips an old inquiry whose updated_at was merely bumped', () => {
-    // Created 30 days ago, updated a minute ago - e.g. a note or status change.
+  it('does not reject a lead for being old - duplicate prevention is structural, not an age cutoff', () => {
+    // A fixed age window was tried and removed: a poller that fell behind
+    // schedule would wrongly skip a genuinely new, never-before-seen lead
+    // once it crossed the cutoff. The real guard against re-processing an
+    // old, merely-updated lead is that `recordLeadDecision` only ever
+    // transitions a lead out of PENDING once (see
+    // leadPolling.test.ts > "does not re-decide a lead on a later polling
+    // cycle") - this pure function has no notion of "already decided" and
+    // must not invent one via a timestamp comparison.
     const row = freshRow({
       created_at: '2026-09-14T11:50:00.000Z',
       updated_at: '2026-10-14T11:59:00.000Z',
     });
 
-    const decision = evaluate(row);
-
-    expect(decision.outcome).toBe('SKIPPED');
-    expect(decision.reason).toBe('not_a_new_inquiry');
-  });
-
-  it('skips a lead just outside the newness window', () => {
-    const row = freshRow({ created_at: '2026-10-14T10:30:00.000Z' }); // 90 min old
-
-    expect(evaluate(row, { LEAD_NEW_LEAD_MAX_AGE_MINUTES: '60' }).reason).toBe('not_a_new_inquiry');
-  });
-
-  it('accepts a lead just inside the newness window', () => {
-    const row = freshRow({ created_at: '2026-10-14T11:05:00.000Z' }); // 55 min old
-
-    expect(evaluate(row, { LEAD_NEW_LEAD_MAX_AGE_MINUTES: '60' }).outcome).toBe('ELIGIBLE');
+    expect(evaluate(row)).toEqual({ outcome: 'ELIGIBLE', reason: 'eligible' });
   });
 
   it('refuses to decide when no creation timestamp exists', () => {
@@ -163,13 +155,23 @@ describe('contact eligibility', () => {
     });
   });
 
-  it.each(['Unsubscribe', 'Unsubscribe (M)', 'Post Trip', 'Closed', 'Deleted'])(
-    'skips a lead with status %s',
-    (status) => {
-      const decision = evaluate(freshRow({ lead_status: status }));
+  it.each(['Unsubscribe', 'Post Trip', 'Closed'])('skips a lead with status %s', (status) => {
+    // Exactly the three statuses the workflow documentation names. Other
+    // observed statuses (Unsubscribe (M), Deleted, Newsletter, Cancelled (NR),
+    // Dead Lead) are deliberately NOT blocked by default - see the next test.
+    const decision = evaluate(freshRow({ lead_status: status }));
 
-      expect(decision.outcome).toBe('SKIPPED');
-      expect(decision.reason).toBe('status_blocked');
+    expect(decision.outcome).toBe('SKIPPED');
+    expect(decision.reason).toBe('status_blocked');
+  });
+
+  it.each(['Unsubscribe (M)', 'Deleted', 'Newsletter', 'Cancelled (NR)', 'Dead Lead'])(
+    'does NOT block status %s by default - not one of the three documented exclusions',
+    (status) => {
+      // Confirming these are left alone is as important as confirming the
+      // three documented ones are blocked: adding them would be inventing a
+      // business rule the workflow documentation never stated.
+      expect(evaluate(freshRow({ lead_status: status })).outcome).toBe('ELIGIBLE');
     },
   );
 
@@ -210,14 +212,19 @@ describe('contact eligibility', () => {
 });
 
 describe('caller holds', () => {
-  it('skips a lead whose caller hold is still active', () => {
+  // The hold reserves a lead FOR the AI Caller against human CRM claiming
+  // (confirmed by the workflow documentation) - it is a reason to call soon,
+  // never a reason to skip. `evaluateListEligibility` does not gate on
+  // `caller_hold_until` at all; the value is surfaced to the call context
+  // instead (see leadContext.test.ts).
+
+  it('does not skip a lead with an active (future) caller hold', () => {
     const decision = evaluate(freshRow({ caller_hold_until: '2026-10-14T18:00:00.000Z' }));
 
-    expect(decision.outcome).toBe('SKIPPED');
-    expect(decision.reason).toBe('caller_hold_active');
+    expect(decision).toEqual({ outcome: 'ELIGIBLE', reason: 'eligible' });
   });
 
-  it('ignores a hold that has already expired', () => {
+  it('does not skip a lead whose hold has already expired', () => {
     expect(evaluate(freshRow({ caller_hold_until: '2026-10-14T06:00:00.000Z' })).outcome).toBe(
       'ELIGIBLE',
     );
@@ -227,11 +234,11 @@ describe('caller holds', () => {
     expect(evaluate(freshRow({ caller_hold_until: null })).outcome).toBe('ELIGIBLE');
   });
 
-  it('refuses to decide when the hold value is unparsable', () => {
-    const decision = evaluate(freshRow({ caller_hold_until: 'soon' }));
-
-    expect(decision.outcome).toBe('NEEDS_REVIEW');
-    expect(decision.reason).toBe('caller_hold_active');
+  it('does not reject a lead for an unparsable hold value either', () => {
+    // We never act on this field here, so a malformed value cannot block
+    // anything - it simply will not appear in the call context (see
+    // leadContext.test.ts).
+    expect(evaluate(freshRow({ caller_hold_until: 'soon' })).outcome).toBe('ELIGIBLE');
   });
 });
 

@@ -23,8 +23,6 @@ export type EligibilityReason =
   | 'lead_deleted'
   | 'not_a_lead'
   | 'status_blocked'
-  | 'caller_hold_active'
-  | 'not_a_new_inquiry'
   | 'known_before_bootstrap'
   | 'phone_not_validated'
   | 'is_lead_field_absent'
@@ -35,10 +33,7 @@ export type EligibilityReason =
   | 'context_lookup_failed'
   | 'awaiting_new_lead_rule_confirmation';
 
-type EligibilityConfig = Pick<
-  Env,
-  'LEAD_ELIGIBILITY_AUTO_ENABLED' | 'LEAD_BLOCKED_STATUSES' | 'LEAD_NEW_LEAD_MAX_AGE_MINUTES'
->;
+type EligibilityConfig = Pick<Env, 'LEAD_ELIGIBILITY_AUTO_ENABLED' | 'LEAD_BLOCKED_STATUSES'>;
 
 export interface EligibilityInput {
   row: LeadListRow;
@@ -71,37 +66,28 @@ const IS_LEAD_COLUMN = 'is_lead';
 /**
  * Column carrying the inquiry's creation time.
  *
- * CONFIRMED against the live API: a string on every row. This is what separates
- * a genuinely new inquiry from an old one whose `updated_at` was merely bumped -
- * 2380 of 2400 sampled rows had been updated after creation.
+ * CONFIRMED against the live API: a string on every row.
+ *
+ * Its role here is deliberately narrow: it only has to exist and parse, so we
+ * know we are looking at a genuine creation event rather than a malformed
+ * record. It is NOT used as an age cutoff (see the note on the removed
+ * "newness window" below) - the thing that actually stops an old, merely-
+ * updated lead from being treated as new is structural, not a timestamp
+ * comparison: `recordLeadDecision` (in the repository layer) only ever
+ * transitions a lead out of PENDING once, and the bootstrap run below records
+ * every pre-existing lead before polling ever begins. Together those two
+ * mean: any lead this function is asked to judge, that was not present at
+ * bootstrap and has never been decided before, IS the first time the AI
+ * Caller has ever seen it - regardless of how many minutes old `created_at`
+ * happens to be by the time a poll run (possibly delayed) picks it up.
+ *
+ * An additional fixed age cutoff (e.g. "no older than 60 minutes") was tried
+ * in an earlier version of this file and removed: it was not supported by the
+ * documented workflow, and it actively worked against correctness - a poller
+ * that fell behind schedule would wrongly skip genuinely new leads once they
+ * crossed the cutoff, even though nothing had decided them yet.
  */
 const CREATED_AT_COLUMN = 'created_at';
-
-/**
- * Column carrying an active caller hold.
- *
- * CONFIRMED present on every list row, but never populated in the sampled data,
- * so the API's own semantics for this exact column are STILL UNVERIFIED - this
- * is an assumption, not a confirmed contract, and the code below treats it that
- * way (isolated behind one conservative rule, never presented as confirmed).
- *
- * What IS confirmed, from the workflow documentation and from David directly:
- * a lead is held for the caller for a period (10 minutes, set in the product
- * for testing), the hold ends when the caller reports an attempt, and it
- * expires automatically if no attempt is reported. David's reply ("It should
- * be.. I have it set at 10 mins now") confirms that 10-minute PRODUCT setting,
- * not that `caller_hold_until` is literally how it is implemented or exposed
- * via this API field - that link is this code's own inference from the field
- * name, nothing more. We never set, compute or assume a duration here; we only
- * read whatever timestamp the API returns, if any.
- *
- * The chosen interpretation - a future timestamp means "do not call until
- * then" - is conservative in the sense that matters: if the assumption is
- * wrong and the field means something else entirely, the only possible error
- * is skipping a lead that was actually callable. It can never cause a call
- * that should have been held back.
- */
-const CALLER_HOLD_COLUMN = 'caller_hold_until';
 
 /**
  * Decides whether a lead from the incremental listing may enter the
@@ -112,11 +98,22 @@ const CALLER_HOLD_COLUMN = 'caller_hold_until';
  * never by itself a reason to call. Every check below either skips on a
  * verified field or defers to NEEDS_REVIEW; nothing becomes ELIGIBLE on a
  * guess.
+ *
+ * Deliberately NOT checked here: `caller_hold_until`. Per the documented
+ * workflow, a hold reserves a new lead FOR the AI Caller - it blocks a human
+ * sales agent from claiming it through the CRM for the hold's duration (10
+ * minutes, confirmed directly) - so its presence is a reason to call soon, not
+ * a reason to skip. An earlier version of this file treated a future
+ * `caller_hold_until` as a skip condition, which had the logic backwards. We
+ * still cannot confirm that `caller_hold_until` is literally the field that
+ * implements this hold - every sampled row had it `null` - so rather than
+ * encode an eligibility rule on top of an unconfirmed field mapping, its value
+ * is simply carried into the call context (`leadContext.service.ts`) for a
+ * future caller to use when timing an attempt, and is not used as a gate here.
  */
 export function evaluateListEligibility(input: EligibilityInput): EligibilityDecision {
   const { row } = input;
   const config = input.config ?? env;
-  const now = input.now ?? new Date();
 
   // 1. Deleted inquiries are out, on a documented field.
   if (row.is_deleted === true) {
@@ -144,12 +141,19 @@ export function evaluateListEligibility(input: EligibilityInput): EligibilityDec
   //
   // IMPORTANT: a `null` status (2293 of 2400 sampled rows) is NOT treated as a
   // pass-through signal of eligibility - it is simply not one of the three
-  // explicitly excluded statuses, so the documented exclusion rule does not
-  // apply to it. It still has to clear every other gate below (bootstrap, hold,
-  // newness window, the master switch, phone validation) before it can ever
-  // become ELIGIBLE. Only a MISSING column (`undefined`, the field itself not
-  // present) is treated as undecidable, because then we cannot even check
-  // whether the lead carries an excluded status.
+  // documented excluded statuses (Unsubscribe, Closed, Post Trip), so the
+  // exclusion rule does not apply to it. It still has to clear every other
+  // gate below (bootstrap, created_at, the master switch, phone validation)
+  // before it can ever become ELIGIBLE. Only a MISSING column (`undefined`,
+  // the field itself not present) is treated as undecidable, because then we
+  // cannot even check whether the lead carries an excluded status.
+  //
+  // The blocklist is intentionally limited to exactly the three documented
+  // statuses. Other statuses observed live but never confirmed as exclusions
+  // (`Newsletter`, `Unsubscribe (M)`, `Deleted`, `Cancelled (NR)`, `Dead Lead`)
+  // are deliberately NOT added here - doing so would be inventing a business
+  // rule, not applying one. `LEAD_BLOCKED_STATUSES` remains configurable if
+  // the product owner confirms more exclusions.
   const status = row[LEAD_STATUS_COLUMN];
   if (status === undefined) {
     return {
@@ -162,43 +166,22 @@ export function evaluateListEligibility(input: EligibilityInput): EligibilityDec
     return { outcome: 'SKIPPED', reason: 'status_blocked', detail: `status "${status}"` };
   }
 
-  // 4. An active caller hold means someone has reserved this lead.
-  const holdRaw = row[CALLER_HOLD_COLUMN];
-  if (holdRaw !== undefined && holdRaw !== null) {
-    const holdUntil = parseTimestamp(holdRaw);
-    if (holdUntil === null) {
-      return {
-        outcome: 'NEEDS_REVIEW',
-        reason: 'caller_hold_active',
-        detail: `"${CALLER_HOLD_COLUMN}" is set but is not a parsable timestamp`,
-      };
-    }
-    if (holdUntil.getTime() > now.getTime()) {
-      return {
-        outcome: 'SKIPPED',
-        reason: 'caller_hold_active',
-        detail: `held until ${holdUntil.toISOString()}`,
-      };
-    }
-  }
-
-  // 5. Leads that already existed when the AI Caller started are not new.
+  // 4. Leads that already existed when the AI Caller started are not new.
   if (input.isBootstrapRun === true) {
     return { outcome: 'SKIPPED', reason: 'known_before_bootstrap' };
   }
 
-  // 6. New inquiry, or an old one that merely changed?
+  // 5. `created_at` must exist and parse - see the comment on
+  //    CREATED_AT_COLUMN for why this is a presence check, not an age cutoff.
   const createdAtRaw = row[CREATED_AT_COLUMN];
   if (createdAtRaw === undefined || createdAtRaw === null) {
     return {
       outcome: 'NEEDS_REVIEW',
       reason: 'created_at_field_absent',
-      detail: `no usable "${CREATED_AT_COLUMN}" column; cannot tell a new inquiry from a changed one`,
+      detail: `no usable "${CREATED_AT_COLUMN}" column; cannot confirm this is a creation event`,
     };
   }
-
-  const createdAt = parseTimestamp(createdAtRaw);
-  if (createdAt === null) {
+  if (parseTimestamp(createdAtRaw) === null) {
     return {
       outcome: 'NEEDS_REVIEW',
       reason: 'created_at_field_absent',
@@ -206,18 +189,9 @@ export function evaluateListEligibility(input: EligibilityInput): EligibilityDec
     };
   }
 
-  const ageMinutes = (now.getTime() - createdAt.getTime()) / 60_000;
-  if (ageMinutes > config.LEAD_NEW_LEAD_MAX_AGE_MINUTES) {
-    return {
-      outcome: 'SKIPPED',
-      reason: 'not_a_new_inquiry',
-      detail: `created ${String(Math.round(ageMinutes))} minutes ago; only an update bumped updated_at`,
-    };
-  }
-
-  // 7. Master safety switch. The field contract is now confirmed, but the
-  //    business rule (how recent counts as "new") is the owner's call, so this
-  //    stays off until they enable it explicitly.
+  // 6. Master safety switch. The field contract is now confirmed, but turning
+  //    on automatic calling is the owner's decision, so this stays off until
+  //    they enable it explicitly.
   if (!config.LEAD_ELIGIBILITY_AUTO_ENABLED) {
     return {
       outcome: 'NEEDS_REVIEW',
@@ -235,7 +209,8 @@ function isBlockedStatus(status: string, blocked: readonly string[]): boolean {
   return blocked.some((entry) => entry.trim().toLowerCase() === normalized);
 }
 
-function parseTimestamp(value: unknown): Date | null {
+/** Parses a value that may be a Lead API timestamp. Exported for reuse by callers that need to interpret `caller_hold_until` without this module treating it as a gate. */
+export function parseTimestamp(value: unknown): Date | null {
   if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value;
   if (typeof value !== 'string' && typeof value !== 'number') return null;
 

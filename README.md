@@ -26,7 +26,7 @@ writes a single note back to the CRM.
 - Read-only Lead API client with bounded retries and defensive parsing
 - Incremental lead polling with durable cursor and bootstrap protection
 - Explicit new-vs-changed lead eligibility, with automatic calling disabled
-- 216 unit/integration tests, ESLint + Prettier
+- 220 unit/integration tests, ESLint + Prettier
 
 ## Architecture
 
@@ -254,15 +254,19 @@ The listing returns **new and changed** inquiries - a note, correction,
 assignment or status change all bump `updated_at` - so appearing in a page is
 never by itself a reason to call. Each row is judged in order:
 
-| #   | Check                                          | Result when it fails                                             |
-| --- | ---------------------------------------------- | ---------------------------------------------------------------- |
-| 1   | `is_deleted` is not true                       | `SKIPPED` / `lead_deleted`                                       |
-| 2   | `is_lead === true`                             | `SKIPPED` / `not_a_lead` (absent field -> `NEEDS_REVIEW`)        |
-| 3   | `lead_status` not blocked                      | `SKIPPED` / `status_blocked`                                     |
-| 4   | not seen during the bootstrap run              | `SKIPPED` / `known_before_bootstrap`                             |
-| 5   | created within `LEAD_NEW_LEAD_MAX_AGE_MINUTES` | `SKIPPED` / `not_a_new_inquiry`                                  |
-| 6   | `LEAD_ELIGIBILITY_AUTO_ENABLED` is on          | `NEEDS_REVIEW` / `awaiting_new_lead_rule_confirmation`           |
-| 7   | validated E.164 phone verdict                  | `SKIPPED` / `phone_not_validated` (unreadable -> `NEEDS_REVIEW`) |
+| #   | Check                                                       | Result when it fails                                             |
+| --- | ----------------------------------------------------------- | ---------------------------------------------------------------- |
+| 1   | `is_deleted` is not true                                    | `SKIPPED` / `lead_deleted`                                       |
+| 2   | `is_lead === true`                                          | `SKIPPED` / `not_a_lead` (absent field -> `NEEDS_REVIEW`)        |
+| 3   | `lead_status` not one of `Unsubscribe`/`Closed`/`Post Trip` | `SKIPPED` / `status_blocked`                                     |
+| 4   | not seen during the bootstrap run                           | `SKIPPED` / `known_before_bootstrap`                             |
+| 5   | `created_at` present and parsable                           | `NEEDS_REVIEW` / `created_at_field_absent`                       |
+| 6   | `LEAD_ELIGIBILITY_AUTO_ENABLED` is on                       | `NEEDS_REVIEW` / `awaiting_new_lead_rule_confirmation`           |
+| 7   | validated E.164 phone verdict                               | `SKIPPED` / `phone_not_validated` (unreadable -> `NEEDS_REVIEW`) |
+
+Not a gate at all: `caller_hold_until`. It reserves the lead _for_ the AI
+Caller against human CRM claiming, so its presence is a reason to call soon,
+not a reason to skip — see [below](#caller_hold_until).
 
 **Two safety properties worth knowing about:**
 
@@ -360,96 +364,104 @@ context and also kept whole, so nothing is lost.
 
 ### `caller_hold_until`
 
-A real column on every row, but **never populated** in the sampled data, so its
-semantics are unverified. It is read the only safe way: a timestamp in the
-future means "do not call", and an unparsable value routes the lead to review.
+A real column on every row, but **never populated** in the sampled data. The
+_business concept_ it is assumed to represent is now confirmed directly by the
+product owner: a 10-minute hold that reserves a newly arrived lead **for the AI
+Caller**, blocking a human sales agent from claiming it through the CRM during
+that window. The hold ends early when a caller attempt is reported, or expires
+automatically otherwise.
+
+That makes an earlier version of this check backwards: it treated a future
+`caller_hold_until` as a reason to **skip** the lead, as if the hold worked
+against the AI Caller rather than for it. It has been corrected - a hold is
+never used to gate eligibility. The timestamp is instead carried into the call
+context (`LeadCallContext.callerHoldUntil`) for a future caller to use when
+timing an attempt. We still cannot confirm that this specific column is how the
+hold is exposed via the API - it has been `null` in every row ever sampled -
+but the corrected logic no longer depends on that guess being right: a wrong
+mapping can only leave the context field empty, never cause a wrong skip or a
+wrong call.
 
 ## The five outstanding decisions
 
-Reviewed against the workflow documentation, the Lead API documentation, and
-verified live behavior (read-only GETs only; nothing was written).
+Reviewed against the documented AI Caller workflow, the Lead API
+documentation, and the product owner's direct clarifications. Read-only GETs
+only; nothing was written.
 
-### Decision 1 — the caller hold
+### Decision 1 — the 10-minute caller hold
 
-| Item                                                                                    | Classification                                                                                                                                    |
-| --------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-| A hold exists, ends when the caller reports an attempt, expires automatically otherwise | **Confirmed by the workflow doc**                                                                                                                 |
-| Hold duration is 10 minutes (current test setting)                                      | **Confirmed by the product owner directly** — not an API contract detail                                                                          |
-| `caller_hold_until` is the field that implements this hold                              | **Still an assumption** — not named in either document; only the column's existence and that it is empty in the sample are confirmed by live data |
+| Item                                                                                                                               | Classification                                                                                                                    |
+| ---------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| A hold exists, reserves the lead for the AI Caller against human CRM claiming, ends on a reported attempt or expires automatically | **Confirmed directly by the product owner**                                                                                       |
+| Hold duration is 10 minutes (current test setting)                                                                                 | **Confirmed directly**                                                                                                            |
+| `caller_hold_until` is the API field that implements this hold                                                                     | **Still an assumption** — the column has been `null` in every row ever sampled, so its populated behavior has never been observed |
 
-The code already treated a future `caller_hold_until` as a reason to **skip**
-(`caller_hold_active`), and that has not changed. What changed is the
-documentation: the comment above `CALLER_HOLD_COLUMN` in
-[leadEligibility.service.ts](src/services/leadEligibility.service.ts) now says
-explicitly that this is our own inference from the field name, states what
-David's "10 mins" reply does and does not confirm, and explains why the chosen
-interpretation is conservative (a wrong guess can only withhold a call, never
-cause one). We never set, release, or compute a hold — only read it.
+**This was a real bug, now fixed.** The previous version treated a future
+`caller_hold_until` as a reason to **skip** the lead — backwards, since the
+hold works _for_ the AI Caller, not against it. `evaluateListEligibility` no
+longer gates on this field at all; the value is only surfaced to
+`LeadCallContext.callerHoldUntil` for a future caller to use when timing an
+attempt. No CRM endpoint to set, extend, or release the hold has been invented
+or implemented — we only ever read whatever the API returns.
 
 ### Decision 2 — what counts as a new lead
 
-| Item                                                                                 | Classification                                                                                      |
-| ------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------- |
-| `created_at` exists on every row and separates creation from later edits             | **Confirmed by live data**                                                                          |
-| `updated_at`-only changes (notes, assignments, corrections) must not cause a re-call | **Confirmed by the Lead API doc**, and enforced (decisions are recorded once; see Decision 2 tests) |
-| How recent counts as "new" (currently 60 minutes)                                    | **Unresolved — a policy choice, not a contract fact**                                               |
+| Item                                                                                 | Classification                                                                                                                                                           |
+| ------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `created_at` exists on every row and separates creation from later edits             | **Confirmed by live data**                                                                                                                                               |
+| `updated_at`-only changes (notes, assignments, corrections) must not cause a re-call | **Confirmed by the Lead API doc**, enforced structurally                                                                                                                 |
+| A fixed age window (e.g. "no older than 60 minutes")                                 | **Removed** — not supported by the documented workflow, and actively wrong: a poller that fell behind would wrongly skip a genuinely new lead once it crossed the cutoff |
 
-A real gap existed here: the old `--dry-run` only printed column names from one
-page — it never actually evaluated eligibility, so there was no way to see
-"which leads would be considered new" without writing to the database. Added
-[leadEligibilityPreview.service.ts](src/services/leadEligibilityPreview.service.ts),
-a function that is **structurally incapable of touching the database** — it
-has no import of either repository, only the read-only API client plus the
-same eligibility rules the real poller uses. See
-[Inspecting eligible leads](#inspecting-eligible-leads-without-processing-them)
-below for the command and real output.
+**What actually prevents an old lead from being treated as new** is structural,
+not a timestamp comparison: `recordLeadDecision` (repository layer) only ever
+transitions a lead out of `PENDING` once, and the bootstrap run records
+everything present before polling began. `created_at` now only has to exist
+and parse — it is a presence check, not an age cutoff. The `poll:leads:preview`
+command (added last round) lets you see exactly which leads this produces
+without writing anything; see
+[Inspecting eligible leads](#inspecting-eligible-leads-without-processing-them).
 
 ### Decision 3 — eligibility, statuses, and phone validation
 
-| Item                                                                       | Classification                                                                                                                                                                                                                                                         |
-| -------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Only `is_lead === true` may be processed                                   | **Confirmed by the workflow doc**, enforced                                                                                                                                                                                                                            |
-| `Unsubscribe` / `Post Trip` block calling                                  | **Confirmed by the workflow doc**, enforced                                                                                                                                                                                                                            |
-| `Closed` blocks calling                                                    | **Confirmed by the workflow doc as a concept** — but confirmed **absent** from both the documented status legend and 2400 sampled rows, so it is a label mismatch, not a resolved mapping                                                                              |
-| `phone_e164` + `valid === true` is the callable number                     | **Confirmed by live data** (the doc never named a shape; `e164` was my earlier wrong guess)                                                                                                                                                                            |
-| `phone_raw` / `phone_best` must never be dialled                           | **Confirmed by the workflow doc**, enforced — see `readPhoneVerdict()`                                                                                                                                                                                                 |
-| A `null` status means eligible                                             | **Explicitly not assumed** — see the new comment at the status check in `leadEligibility.service.ts`: null only means "not one of the three named exclusions," and still has to clear bootstrap, hold, newness, and the master switch before it can ever be `ELIGIBLE` |
-| `Cancelled (NR)` / `Dead Lead` / `Newsletter` equal a documented exclusion | **Unresolved — not assumed**, not blocked                                                                                                                                                                                                                              |
+| Item                                                                                                   | Classification                                                                                                                                                          |
+| ------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Only `is_lead === true` may be processed                                                               | **Confirmed by the workflow doc**, enforced                                                                                                                             |
+| `Unsubscribe`, `Closed`, `Post Trip` block calling                                                     | **Confirmed by the workflow doc**, enforced — and **only these three**                                                                                                  |
+| `phone_e164` + `valid === true` is the callable number                                                 | **Confirmed by live data**                                                                                                                                              |
+| `phone_raw` / `phone_best` must never be dialled                                                       | **Confirmed by the workflow doc**, enforced                                                                                                                             |
+| A `null` status means eligible                                                                         | **Explicitly not assumed** — null only means "not one of the three exclusions," and still has to clear every other gate                                                 |
+| `Unsubscribe (M)`, `Deleted`, `Cancelled (NR)`, `Dead Lead`, `Newsletter` equal a documented exclusion | **Confirmed NOT to assume this** — removed from the default blocklist (it previously included `Unsubscribe (M)` and `Deleted`, which were my own unconfirmed additions) |
 
-No code change was needed for the phone/`is_lead`/status logic itself — it was
-already correct from the last round. I added the comment above clarifying that
-a null status is never treated as a pass signal, and reran the full eligibility
-test suite (41 tests) to confirm the existing behavior, including the already-
-present test for a null `lead_status`.
+The default `LEAD_BLOCKED_STATUSES` was narrowed from five entries to exactly
+the three the workflow document names. `LEAD_BLOCKED_STATUSES` remains
+configurable, so adding any of the others later is a config change.
 
 ### Decision 4 — form answers and person history
 
-| Item                                                                                                              | Classification                                                                                                       |
-| ----------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| `confirm_trek`, `timing`, `trip_length`, `group_size`, `experience`, `been_before` are the real questionnaire ids | **Confirmed by live data**                                                                                           |
-| There is no destination, budget, or travel-dates column or question                                               | **Confirmed by live data** — nothing is invented for these                                                           |
-| Person history and lead detail are read before context is built                                                   | **Implemented**: `buildLeadCallContext()` takes both; `summarizePersonHistory()` reads the confirmed `profile` shape |
+| Item                                                                                                              | Classification                                   |
+| ----------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ |
+| `confirm_trek`, `timing`, `trip_length`, `group_size`, `experience`, `been_before` are the real questionnaire ids | **Confirmed by live data**                       |
+| There is no destination, budget, or travel-dates column or question                                               | **Confirmed by live data** — nothing is invented |
+| Person history and lead detail are read before context is built                                                   | **Implemented**                                  |
 
-No change needed; this was already correct from the last round. Verified by
-re-reading [leadContext.service.ts](src/services/leadContext.service.ts)
-against both documents and rerunning its 17 tests.
+No change needed — this was already correct. Re-verified against both
+documents; its tests (20, including 3 new ones for `callerHoldUntil`) pass.
 
-### Decision 5 — assignment, notes, and CRM writes
+### Decision 5 — assignment, notes, and CRM write behavior
 
-| Item                                                                                                                   | Classification                                                                                                   |
-| ---------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| Only a plain-text note and a booking-triggered assignment are permitted, ever                                          | **Confirmed by the workflow doc**                                                                                |
-| Already-assigned leads keep their agent; unassigned + booked leads get the booking agent; no booking means a note only | **Confirmed by the workflow doc**                                                                                |
-| Lead status must never be changed                                                                                      | **Confirmed by both documents**, enforced today by **having no write code at all**                               |
-| A single canonical caller identity (`X-Agent-Email`) for POST requests                                                 | **Unresolved** — the Lead API doc gives inconsistent example addresses, and no write path exists yet to need one |
+| Item                                                                                                                   | Classification                                                   |
+| ---------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| Only a plain-text note and a booking-triggered assignment are permitted, ever                                          | **Confirmed by the workflow doc**                                |
+| Already-assigned leads keep their agent; unassigned + booked leads get the booking agent; no booking means a note only | **Confirmed by the workflow doc**                                |
+| Lead status must never be changed                                                                                      | **Confirmed**, enforced today by having **no write code at all** |
+| Canonical `X-Agent-Email` identity for future writes                                                                   | **Confirmed**: `ai-caller@himalayanwonders.com`                  |
 
-No write code exists in this codebase ([readOnlyGuarantee.test.ts](tests/readOnlyGuarantee.test.ts)
-statically asserts this - 13 tests, including a check that no
-`lead_status`/`trip_status` literal is ever assigned). Nothing to change for
-Phase 2; the caller-identity ambiguity is now logged as an open item for
-Phase 5 in [docs/architecture.md](docs/architecture.md).
+No write code exists ([readOnlyGuarantee.test.ts](tests/readOnlyGuarantee.test.ts),
+13 tests). The confirmed identity is recorded as a commented, planned Phase 5
+variable in `.env.example` (`CRM_AGENT_EMAIL`) — not consumed by any code yet,
+since no write path exists to use it.
 
-## Inspecting eligible leads without processing them
+## Inspecting eligible leads without processing them## Inspecting eligible leads without processing them
 
 ```bash
 npm run poll:leads:preview
@@ -471,8 +483,10 @@ applies the phone-verdict check (one extra read per candidate). Output is a
 summary (counts by outcome and by reason) followed by one line per lead with
 its id, `updated_at`, outcome, and reason — never a name, phone, or email.
 
-**Actually run against the live API while preparing this report** (read-only,
-nothing written):
+**Actually run against the live API in the previous round** (read-only, nothing
+written; results predate this round's fix to the hold logic and the removed
+age window, so `not_a_new_inquiry` no longer occurs — a lead that produced it
+before would now continue past that check):
 
 | Window        | Pages              | Rows | Result                                                            |
 | ------------- | ------------------ | ---- | ----------------------------------------------------------------- |
@@ -480,32 +494,30 @@ nothing written):
 | last 7 days   | 20 (bound reached) | 4000 | `not_a_lead` 2531, `status_blocked` 439, `not_a_new_inquiry` 1030 |
 
 Zero rows were `ELIGIBLE` (the master switch is off, as required) and zero were
-`NEEDS_REVIEW` for a missing field — every row sampled carried `is_lead`,
-`lead_status`, and `created_at`, consistent with the earlier contract
-confirmation. The listing orders oldest-first, so the 7-day run's 20-page bound
-had not yet reached the most recent records; a run with a larger `--max-pages`
-or a narrower `--since` would reach them.
+`NEEDS_REVIEW` for a missing field. This round's code changes were not
+re-verified against a fresh live run - see the report for what **was** run.
 
 ## Remaining questions for David
 
-Nothing technical is blocking. These are business calls:
+Resolved this round: the hold's purpose and duration, the "new lead" rule
+(no fixed window), the exact three blocked statuses, and the canonical
+`X-Agent-Email`. What is left:
 
 1. **Turn on automatic eligibility?** `LEAD_ELIGIBILITY_AUTO_ENABLED` stays
-   `false` until you say otherwise — every field it depends on is now
-   confirmed.
-2. **How recent is "new"?** Default 60 minutes. Live data: 0 leads created in
-   the last hour, 20 in the last 24 hours in the sample — this only works if
-   polling genuinely runs close to every minute.
-3. **Should `Newsletter` be blocked?** Most common non-null status (67 of 2400
-   rows). Not currently blocked.
-4. **What did you mean by `Closed`?** It is not a real status in the data or
-   the documented legend. `Cancelled (NR)` or `Dead Lead`?
-5. **Does a future `caller_hold_until` mean "do not call"?** This is our
-   inference from the field name, not confirmed API behavior. Your "10 mins"
-   reply confirmed the hold duration in the product, not this field's exact
-   role.
-6. **Canonical `X-Agent-Email` for writes** — the Lead API doc gives
-   inconsistent examples. Needed before Phase 5, not before.
+   `false` until you say otherwise.
+2. **Should `Newsletter` be blocked?** Most common non-null status (67 of 2400
+   rows). Not currently blocked, per your instruction not to add it without
+   confirmation.
+3. **Is `caller_hold_until` really the hold field?** The business rule you
+   confirmed (10-minute hold, reserved for the AI Caller) no longer depends on
+   this being right — the value is only passed through as context, never used
+   to gate eligibility — but if you can confirm the exact field, it would
+   remove the last assumption in this area.
+4. **How does a caller attempt end the hold early?** You said "a caller
+   attempt ends the hold early... do not invent CRM endpoints or writes to
+   manage the hold" — correctly, none exist yet. When Phase 3 implements
+   actual calling, it will need to know what ending the hold actually requires
+   (an endpoint? automatic on the Retell webhook firing?).
 
 ## npm scripts## npm scripts
 
@@ -585,7 +597,7 @@ Everything below was run in this repository on Node 22.14.0.
 | `npm run typecheck`             | ✅ clean                                                                                                                                                  |
 | `npm run lint`                  | ✅ clean                                                                                                                                                  |
 | `npm run format:check`          | ✅ clean                                                                                                                                                  |
-| `npm test`                      | ✅ **191 tests, 11 files, all passing**                                                                                                                   |
+| `npm test`                      | ✅ **220 tests, 12 files, all passing**                                                                                                                   |
 | `npm run build`                 | ✅ compiles to `dist/`                                                                                                                                    |
 | `npm run prisma:validate`       | ✅ schema is valid                                                                                                                                        |
 | `npm run prisma:generate`       | ✅ client generated                                                                                                                                       |
