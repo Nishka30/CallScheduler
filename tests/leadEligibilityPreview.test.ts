@@ -266,3 +266,108 @@ describe('previewLeadEligibility', () => {
     expect(summary.byOutcome['ELIGIBLE']).toBe(5);
   });
 });
+
+describe('Newsletter visibility (not a blocklist addition)', () => {
+  it('flags and counts a Newsletter record whose is_lead is true', async () => {
+    const client = fakeClient([
+      { rows: [row('1', { lead_status: 'Newsletter' })], nextCursor: null },
+    ]);
+
+    const summary = await previewLeadEligibility({
+      since: '2026-10-14T00:00:00.000Z',
+      client,
+      config: config(),
+      now: NOW,
+    });
+
+    expect(summary.newsletterCandidateCount).toBe(1);
+    expect(summary.rows[0]!.flags).toEqual(['newsletter_status_is_lead']);
+  });
+
+  it('matches the status case-insensitively and with surrounding whitespace', async () => {
+    const client = fakeClient([
+      { rows: [row('1', { lead_status: '  NEWSLETTER  ' })], nextCursor: null },
+    ]);
+
+    const summary = await previewLeadEligibility({
+      since: '2026-10-14T00:00:00.000Z',
+      client,
+      config: config(),
+      now: NOW,
+    });
+
+    expect(summary.newsletterCandidateCount).toBe(1);
+  });
+
+  it('does not flag a Newsletter record whose is_lead is not true', async () => {
+    const client = fakeClient([
+      { rows: [row('1', { lead_status: 'Newsletter', is_lead: false })], nextCursor: null },
+    ]);
+
+    const summary = await previewLeadEligibility({
+      since: '2026-10-14T00:00:00.000Z',
+      client,
+      config: config(),
+      now: NOW,
+    });
+
+    expect(summary.newsletterCandidateCount).toBe(0);
+    expect(summary.rows[0]!.flags).toBeUndefined();
+  });
+
+  it('does not flag an unrelated status', async () => {
+    const client = fakeClient([
+      { rows: [row('1', { lead_status: 'New Lead' })], nextCursor: null },
+    ]);
+
+    const summary = await previewLeadEligibility({
+      since: '2026-10-14T00:00:00.000Z',
+      client,
+      config: config(),
+      now: NOW,
+    });
+
+    expect(summary.newsletterCandidateCount).toBe(0);
+  });
+
+  it('never changes the outcome or reason - it is visibility only, not a rule', async () => {
+    const client = fakeClient([
+      { rows: [row('1', { lead_status: 'Newsletter' })], nextCursor: null },
+    ]);
+
+    const summary = await previewLeadEligibility({
+      since: '2026-10-14T00:00:00.000Z',
+      client,
+      config: config({ LEAD_ELIGIBILITY_AUTO_ENABLED: 'false' }),
+      now: NOW,
+    });
+
+    // Same as any other otherwise-eligible row while the switch is off -
+    // Newsletter is not blocked, and flagging it does not change that.
+    expect(summary.rows[0]).toMatchObject({
+      outcome: 'NEEDS_REVIEW',
+      reason: 'awaiting_new_lead_rule_confirmation',
+      flags: ['newsletter_status_is_lead'],
+    });
+  });
+
+  it('still flags a Newsletter candidate that is independently skipped for another reason', async () => {
+    const client = fakeClient([
+      {
+        rows: [row('1', { lead_status: 'Newsletter', is_deleted: true })],
+        nextCursor: null,
+      },
+    ]);
+
+    const summary = await previewLeadEligibility({
+      since: '2026-10-14T00:00:00.000Z',
+      client,
+      config: config(),
+      now: NOW,
+    });
+
+    // Visibility is independent of the decision outcome.
+    expect(summary.rows[0]).toMatchObject({ outcome: 'SKIPPED', reason: 'lead_deleted' });
+    expect(summary.newsletterCandidateCount).toBe(1);
+  });
+});

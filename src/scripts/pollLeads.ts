@@ -88,15 +88,26 @@ async function main(): Promise<void> {
         rowsSeen: summary.rowsSeen,
         byOutcome: summary.byOutcome,
         byReason: summary.byReason,
+        // Newsletter is NOT blocked (never confirmed as an exclusion), so this
+        // is the only thing that makes such a record visible instead of
+        // disappearing into the undifferentiated pending pile.
+        newsletterCandidateCount: summary.newsletterCandidateCount,
         checkedPhone: summary.checkedPhone,
       },
       'eligibility preview summary (nothing written)',
     );
 
-    // Lead ids and decision reasons only - never a name, phone or email.
+    // Lead ids, decision reasons, and review flags only - never a name, phone
+    // or email.
     for (const row of summary.rows) {
       logger.info(
-        { leadId: row.leadId, updatedAt: row.updatedAt, outcome: row.outcome, reason: row.reason },
+        {
+          leadId: row.leadId,
+          updatedAt: row.updatedAt,
+          outcome: row.outcome,
+          reason: row.reason,
+          ...(row.flags && row.flags.length > 0 ? { flags: row.flags } : {}),
+        },
         'preview decision',
       );
     }

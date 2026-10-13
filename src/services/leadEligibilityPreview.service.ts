@@ -1,6 +1,7 @@
 import { env, type Env } from '../config/env.js';
 import { logger } from '../lib/logger.js';
 import { LeadApiClient } from '../integrations/leadApi/client.js';
+import type { LeadListRow } from '../integrations/leadApi/schemas.js';
 import {
   evaluateListEligibility,
   evaluatePhoneEligibility,
@@ -23,12 +24,21 @@ import {
  * Running it twice with the same `since` produces the same answer every time.
  */
 
+/**
+ * Review flags: independent of `outcome`/`reason`, and never block or approve
+ * anything by themselves. They exist purely so a human scanning preview output
+ * can find specific categories of record without the decision pipeline having
+ * to encode an unconfirmed business rule for them.
+ */
+export type PreviewFlag = 'newsletter_status_is_lead';
+
 export interface EligibilityPreviewRow {
   leadId: string;
   updatedAt: string;
   outcome: EligibilityOutcome;
   reason: string;
   detail?: string;
+  flags?: PreviewFlag[];
 }
 
 export interface EligibilityPreviewSummary {
@@ -38,6 +48,15 @@ export interface EligibilityPreviewSummary {
   rowsSeen: number;
   byOutcome: Record<string, number>;
   byReason: Record<string, number>;
+  /**
+   * Count of rows with `lead_status === "Newsletter"` AND `is_lead === true`.
+   *
+   * Newsletter is NOT blocked (not one of the three documented exclusions),
+   * so without this count such a record is indistinguishable from any other
+   * pending lead in `byReason` - it would otherwise be invisible for review.
+   * This never changes `outcome` or `reason` for the row.
+   */
+  newsletterCandidateCount: number;
   /** Per-lead decisions, capped at `maxRowsReported`. */
   rows: EligibilityPreviewRow[];
   checkedPhone: boolean;
@@ -78,6 +97,7 @@ export async function previewLeadEligibility(
     rowsSeen: 0,
     byOutcome: {},
     byReason: {},
+    newsletterCandidateCount: 0,
     rows: [],
     checkedPhone: checkPhone,
     warnings: [
@@ -130,6 +150,11 @@ export async function previewLeadEligibility(
       summary.byOutcome[outcome] = (summary.byOutcome[outcome] ?? 0) + 1;
       summary.byReason[reason] = (summary.byReason[reason] ?? 0) + 1;
 
+      const flags = computePreviewFlags(row);
+      if (flags.includes('newsletter_status_is_lead')) {
+        summary.newsletterCandidateCount += 1;
+      }
+
       if (summary.rows.length < maxRowsReported) {
         summary.rows.push({
           leadId: row.id,
@@ -137,6 +162,7 @@ export async function previewLeadEligibility(
           outcome,
           reason,
           ...(detail === undefined ? {} : { detail }),
+          ...(flags.length > 0 ? { flags } : {}),
         });
       }
     }
@@ -162,10 +188,35 @@ export async function previewLeadEligibility(
       rows: summary.rowsSeen,
       byOutcome: summary.byOutcome,
       byReason: summary.byReason,
+      newsletterCandidateCount: summary.newsletterCandidateCount,
       checkedPhone: checkPhone,
     },
     'eligibility preview complete: nothing was written',
   );
 
   return summary;
+}
+
+/**
+ * Computes review flags for one row. Never changes `outcome` or `reason`.
+ *
+ * `newsletter_status_is_lead`: `lead_status` is "Newsletter" (the most common
+ * non-null status observed live, 67 of 2400 sampled rows) AND `is_lead` is
+ * `true`. Newsletter is deliberately NOT in the blocklist - it was never
+ * confirmed as an exclusion, and adding it without confirmation would be
+ * inventing a business rule. This flag exists so such a record is visible for
+ * review instead of disappearing into the undifferentiated pending pile.
+ */
+function computePreviewFlags(row: LeadListRow): PreviewFlag[] {
+  const flags: PreviewFlag[] = [];
+
+  if (row.is_lead === true && isNewsletterStatus(row.lead_status)) {
+    flags.push('newsletter_status_is_lead');
+  }
+
+  return flags;
+}
+
+function isNewsletterStatus(status: unknown): boolean {
+  return typeof status === 'string' && status.trim().toLowerCase() === 'newsletter';
 }

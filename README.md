@@ -26,7 +26,7 @@ writes a single note back to the CRM.
 - Read-only Lead API client with bounded retries and defensive parsing
 - Incremental lead polling with durable cursor and bootstrap protection
 - Explicit new-vs-changed lead eligibility, with automatic calling disabled
-- 220 unit/integration tests, ESLint + Prettier
+- 233 unit/integration tests, ESLint + Prettier
 
 ## Architecture
 
@@ -461,7 +461,7 @@ No write code exists ([readOnlyGuarantee.test.ts](tests/readOnlyGuarantee.test.t
 variable in `.env.example` (`CRM_AGENT_EMAIL`) — not consumed by any code yet,
 since no write path exists to use it.
 
-## Inspecting eligible leads without processing them## Inspecting eligible leads without processing them
+## Inspecting eligible leads without processing them
 
 ```bash
 npm run poll:leads:preview
@@ -480,46 +480,86 @@ npm run poll:leads -- --preview --since=2026-10-10T00:00:00Z --max-pages=20 --ch
 
 `--check-phone` additionally fetches lead detail for list-level candidates and
 applies the phone-verdict check (one extra read per candidate). Output is a
-summary (counts by outcome and by reason) followed by one line per lead with
-its id, `updated_at`, outcome, and reason — never a name, phone, or email.
+summary — counts by outcome, by reason, and a dedicated
+`newsletterCandidateCount` — followed by one line per lead with its id,
+`updated_at`, outcome, reason, and any review `flags` — never a name, phone, or
+email.
 
-**Actually run against the live API in the previous round** (read-only, nothing
-written; results predate this round's fix to the hold logic and the removed
-age window, so `not_a_new_inquiry` no longer occurs — a lead that produced it
-before would now continue past that check):
+**Newsletter visibility, not a blocklist addition.** `Newsletter` is the most
+common non-null status and was never confirmed as an exclusion, so it is not
+blocked. But a `Newsletter` record with `is_lead === true` would otherwise be
+indistinguishable from any other pending lead in the summary, so each one is
+tagged `flags: ["newsletter_status_is_lead"]` and counted separately. This
+changes nothing about its `outcome` or `reason`.
 
-| Window        | Pages              | Rows | Result                                                            |
-| ------------- | ------------------ | ---- | ----------------------------------------------------------------- |
-| last 24 hours | 5 (bound reached)  | 1000 | 100% `SKIPPED` / `not_a_lead`                                     |
-| last 7 days   | 20 (bound reached) | 4000 | `not_a_lead` 2531, `status_blocked` 439, `not_a_new_inquiry` 1030 |
+**Run against the live API this round** (read-only, nothing written) to verify
+both the hold-logic fix and the Newsletter visibility feature:
 
-Zero rows were `ELIGIBLE` (the master switch is off, as required) and zero were
-`NEEDS_REVIEW` for a missing field. This round's code changes were not
-re-verified against a fresh live run - see the report for what **was** run.
+| Window       | Pages              | Rows | Result                                                                                                                                    |
+| ------------ | ------------------ | ---- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| last 7 days  | 20 (bound reached) | 4000 | `not_a_lead` 2531, `awaiting_new_lead_rule_confirmation` **1320**, `status_blocked` **149**                                               |
+| last 30 days | 12 (bound reached) | 2400 | `not_a_lead` 2282, `awaiting_new_lead_rule_confirmation` 108, `status_blocked` 10 — **67 of the 108 flagged `newsletter_status_is_lead`** |
+
+Two things this confirms:
+
+- `not_a_new_inquiry` (1030 occurrences before the fix, over the same 7-day
+  window) **no longer occurs at all** — those leads now correctly continue to
+  `awaiting_new_lead_rule_confirmation` instead of being permanently discarded.
+- **67 of 108** leads pending review in the 30-day sample are `Newsletter`
+  signups, not travel inquiries — the majority. See
+  [docs/architecture.md](docs/architecture.md#an-operational-finding-worth-flagging-now)
+  for why this matters before `LEAD_ELIGIBILITY_AUTO_ENABLED` is turned on.
+
+Zero rows were `ELIGIBLE` (the master switch is off, as required).
+
+## Preparing for Retell and Calendly (no calls, no writes, no bookings)
+
+Three small, safe pieces were added, none of which contact Retell, Calendly, or
+the CRM:
+
+- **[callWindow.service.ts](src/services/callWindow.service.ts)** — a pure
+  function, `evaluateCallWindow()`, that classifies a lead as `within_hold`,
+  `hold_expired`, or `no_hold_info` from `LeadCallContext.callerHoldUntil`. It
+  makes no network call and decides nothing beyond that classification — see
+  the file's own comments for the three decisions (call after expiry? how is
+  an attempt reported? what about `no_hold_info`, the common case today?) it
+  deliberately leaves for Phase 3.
+- **Newsletter visibility** in the preview (above).
+- A **dependencies list** for Retell and Calendly in
+  [docs/architecture.md](docs/architecture.md#preparing-for-phase-3-retell-and-phase-4-calendly) —
+  what this codebase already has ready (call context, `CallRecord` model, the
+  hold-timing utility) versus what genuinely cannot proceed without David's
+  input (API credentials, request/webhook shapes, agent/calendar mapping).
+
+No Retell or Calendly client code, webhook handler, or `Booking` model were
+built — doing so without a confirmed contract would mean inventing one.
 
 ## Remaining questions for David
 
-Resolved this round: the hold's purpose and duration, the "new lead" rule
-(no fixed window), the exact three blocked statuses, and the canonical
-`X-Agent-Email`. What is left:
+Resolved earlier: the hold's purpose and duration, the "new lead" rule (no
+fixed window), the exact three blocked statuses, and the canonical
+`X-Agent-Email`.
 
 1. **Turn on automatic eligibility?** `LEAD_ELIGIBILITY_AUTO_ENABLED` stays
    `false` until you say otherwise.
-2. **Should `Newsletter` be blocked?** Most common non-null status (67 of 2400
-   rows). Not currently blocked, per your instruction not to add it without
-   confirmation.
+2. **Should `Newsletter` be blocked?** Still not currently blocked, per your
+   instruction not to add it without confirmation. Now measured: **67 of 108**
+   (62%) of leads pending review in a 30-day sample carry this status — see
+   [the operational finding above](#inspecting-eligible-leads-without-processing-them).
 3. **Is `caller_hold_until` really the hold field?** The business rule you
    confirmed (10-minute hold, reserved for the AI Caller) no longer depends on
    this being right — the value is only passed through as context, never used
-   to gate eligibility — but if you can confirm the exact field, it would
-   remove the last assumption in this area.
-4. **How does a caller attempt end the hold early?** You said "a caller
-   attempt ends the hold early... do not invent CRM endpoints or writes to
-   manage the hold" — correctly, none exist yet. When Phase 3 implements
-   actual calling, it will need to know what ending the hold actually requires
-   (an endpoint? automatic on the Retell webhook firing?).
+   to gate eligibility — but confirming the exact field would remove the last
+   assumption in this area.
+4. **How does a caller attempt end the hold early?** No endpoint for this
+   exists in either document, and none has been invented, as instructed. Phase
+   3 cannot act on `evaluateCallWindow()`'s output without this.
+5. **Should a `hold_expired` lead still be called?** Deliberately left
+   undecided by `evaluateCallWindow()` - see
+   [docs/architecture.md](docs/architecture.md#preparing-for-phase-3-retell-and-phase-4-calendly)
+   for the full Retell/Calendly dependency list this blocks.
 
-## npm scripts## npm scripts
+## npm scripts
 
 | Script                          | Purpose                                      |
 | ------------------------------- | -------------------------------------------- |
@@ -597,7 +637,7 @@ Everything below was run in this repository on Node 22.14.0.
 | `npm run typecheck`             | ✅ clean                                                                                                                                                  |
 | `npm run lint`                  | ✅ clean                                                                                                                                                  |
 | `npm run format:check`          | ✅ clean                                                                                                                                                  |
-| `npm test`                      | ✅ **220 tests, 12 files, all passing**                                                                                                                   |
+| `npm test`                      | ✅ **233 tests, 13 files, all passing**                                                                                                                   |
 | `npm run build`                 | ✅ compiles to `dist/`                                                                                                                                    |
 | `npm run prisma:validate`       | ✅ schema is valid                                                                                                                                        |
 | `npm run prisma:generate`       | ✅ client generated                                                                                                                                       |

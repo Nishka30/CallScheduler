@@ -373,3 +373,84 @@ sampled over 90 days). No write was made.
   until Phase 5).
 - Retell webhook event names, payload shape, and signature scheme.
 - Calendly event types and per-agent availability configuration.
+
+## Preparing for Phase 3 (Retell) and Phase 4 (Calendly)
+
+This section records what is ready, what was deliberately built now, and what
+genuinely cannot proceed without David's input. Nothing here places a call,
+writes to the CRM, or books an appointment.
+
+### Already ready
+
+- **Call context.** `buildLeadCallContext()` produces everything the workflow
+  document asks for: validated phone, customer name, the six confirmed
+  questionnaire answers, free text, and a condensed person history (prior
+  inquiry/booking/call counts, current agent). It is built fresh per call
+  attempt and never persisted, so Phase 3 will not speak from a stale copy.
+- **Our own call storage.** The `CallRecord` Prisma model (lead id, provider
+  call id, status, outcome, summary, timestamps) was defined in Phase 1 and
+  needs no changes - it was already designed for a future call integration.
+- **The caller hold, read correctly.** `evaluateCallWindow()` (new this round,
+  in `callWindow.service.ts`) classifies a lead as `within_hold`,
+  `hold_expired`, or `no_hold_info` from `LeadCallContext.callerHoldUntil`. It
+  is pure and side-effect free - no network call, no database access - and
+  intentionally stops at classification. See the file's own documentation for
+  the three decisions it deliberately leaves to Phase 3 (whether to still call
+  after `hold_expired`, how a caller attempt is reported, and what policy to
+  apply to `no_hold_info`, which is the common case today).
+
+### What was deliberately NOT built
+
+No Retell or Calendly client code, no webhook handler, and no `Booking` model
+exist yet. Building any of them now would mean guessing at an unconfirmed
+contract - exactly what "do not invent undocumented API behavior" rules out.
+When each contract is confirmed, the new client should follow the same shape
+as `src/integrations/leadApi/`: a small typed client, Zod-defended response
+parsing, and a service layer that keeps business rules out of the HTTP layer.
+
+### Dependencies on David - API and calendar information
+
+**Retell (Phase 3):**
+
+1. Base URL, authentication scheme, and API key.
+2. The call-initiation request shape: how `LeadCallContext` fields (phone,
+   name, trek, timing, answers, history) map onto whatever Retell's agent
+   expects as dynamic variables or a system prompt.
+3. Whether the calling agent and its script are already configured in Retell,
+   or need to be built as part of this phase.
+4. Webhook contract: registration, event names, payload shape, and the
+   signature/auth scheme to verify an incoming webhook is genuine.
+5. How a call's outcome (summary, success/voicemail/no-answer) is reported
+   back, and what maps onto `CallRecord.outcome`.
+6. **How a caller attempt is reported to the Lead API**, to end the 10-minute
+   hold early as the workflow document describes. No endpoint for this is
+   named in either document; it has to be confirmed before Phase 3 can act on
+   `evaluateCallWindow()`'s output.
+7. The product decision `evaluateCallWindow()` deliberately leaves open: should
+   the AI Caller still attempt a lead once `hold_expired`?
+
+**Calendly (Phase 4):**
+
+1. Account access and API credential (personal access token vs. OAuth).
+2. The consultation event type(s), and how each maps to a sales agent.
+3. How a lead's assigned (or to-be-assigned) agent maps to a specific Calendly
+   user, so availability is queried for the right calendar.
+4. The real availability and booking endpoints and response shapes - neither
+   has been seen, so nothing about their contract can be assumed.
+5. What "the booking succeeded" means operationally (a synchronous response?
+   a webhook?), since the workflow ties agent assignment directly to that
+   outcome: "assign it to the agent whose slot was booked... only when the
+   lead is unassigned and the booking succeeds."
+6. Timezone handling for availability and the confirmed slot.
+
+### An operational finding worth flagging now
+
+Running the corrected preview (`npm run poll:leads:preview`) over the last 30
+days shows **67 of 108** records that would otherwise be held in
+`NEEDS_REVIEW` (pending the master switch) are `Newsletter`-status records with
+`is_lead === true` - the majority. `Newsletter` is deliberately not in the
+blocklist (never confirmed as an exclusion), but this means that, as things
+stand, turning on `LEAD_ELIGIBILITY_AUTO_ENABLED` without first deciding on
+`Newsletter` would make most of the AI Caller's "new lead" attempts newsletter
+signups rather than travel inquiries. This is reported as data, not assumed as
+a reason to add the exclusion.
