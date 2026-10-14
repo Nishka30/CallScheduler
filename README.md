@@ -26,7 +26,8 @@ writes a single note back to the CRM.
 - Read-only Lead API client with bounded retries and defensive parsing
 - Incremental lead polling with durable cursor and bootstrap protection
 - Explicit new-vs-changed lead eligibility, with automatic calling disabled
-- 233 unit/integration tests, ESLint + Prettier
+- Retell outbound call client (`POST /v2/create-phone-call`), gated off by default
+- 300 unit/integration tests, ESLint + Prettier
 
 ## Architecture
 
@@ -543,29 +544,56 @@ Two things this confirms:
 
 Zero rows were `ELIGIBLE` (the master switch is off, as required).
 
-## Preparing for Retell and Calendly (no calls, no writes, no bookings)
+## Retell integration (outbound calling — disabled by default)
 
-Three small, safe pieces were added, none of which contact Retell, Calendly, or
-the CRM:
+The outbound call client is implemented and tested with mocked requests. **No
+real call is placed:** it is gated behind `RETELL_CALLING_ENABLED` (default
+`false`), enforced before any network request, and it is **not wired into
+polling** — only its tests invoke it. Full detail:
+[docs/retell-integration.md](docs/retell-integration.md).
 
-- **[callWindow.service.ts](src/services/callWindow.service.ts)** — a pure
-  function, `evaluateCallWindow()` (plus `isHoldActive()`), that classifies a
-  lead as `within_hold` or `no_active_hold` from `caller_hold_until`. A future
-  hold means the AI Caller may proceed (subject to eligibility); a `null`, past,
-  or unparsable value means the lead is back with sales and must not be called
-  late. It makes no network call and decides nothing beyond that classification.
-- **[callRecord.repository.ts](src/repositories/callRecord.repository.ts)** —
-  call-attempt tracking keyed by lead id, separate from the hold, that refuses a
-  second attempt while one is unresolved (no migration applied).
-- **Newsletter visibility** in the preview (above).
-- A **dependencies list** for Retell and Calendly in
-  [docs/architecture.md](docs/architecture.md#preparing-for-phase-3-retell-and-phase-4-calendly) —
-  what this codebase already has ready (call context, `CallRecord` model, the
-  hold-timing utility) versus what genuinely cannot proceed without David's
-  input (API credentials, request/webhook shapes, agent/calendar mapping).
+**Verified against Retell's official OpenAPI spec:** `POST /v2/create-phone-call`
+on `https://api.retellai.com`, `Authorization: Bearer <RETELL_API_KEY>`, required
+`from_number`/`to_number` in E.164, response always carries `call_id`.
 
-No Retell or Calendly client code, webhook handler, or `Booking` model were
-built — doing so without a confirmed contract would mean inventing one.
+### Configuring Retell
+
+| Variable                 | Where to get it                                                                             |
+| ------------------------ | ------------------------------------------------------------------------------------------- |
+| `RETELL_API_KEY`         | Retell dashboard → **API Keys**. Secret; set it only in local `.env`.                       |
+| `RETELL_AGENT_ID`        | Retell dashboard → **Agents** → open "Travel Call Agent"; the id is in the URL / details.   |
+| `RETELL_FROM_NUMBER`     | Your purchased Retell number in E.164 (`+19789538571`), configured with the outbound agent. |
+| `RETELL_API_BASE_URL`    | `https://api.retellai.com` (default).                                                       |
+| `RETELL_AGENT_NAME`      | `Travel Call Agent` — informational only, not sent to the API.                              |
+| `RETELL_TIMEOUT_MS`      | Optional; default `15000`.                                                                  |
+| `RETELL_CALLING_ENABLED` | **Keep `false`.** The master switch for placing calls.                                      |
+
+The server boots without any Retell value; a call fails clearly (naming the
+missing variable, never its value) if config is incomplete.
+
+### Keeping calling disabled during development
+
+Leave `RETELL_CALLING_ENABLED=false` (the default). The client's first action in
+`createPhoneCall()` is the switch guard, so with it off the method throws a
+`disabled` error and makes **zero** network calls — verified against the real
+`.env` config. Tests enable the switch only on an isolated, injected config
+object; the global/`.env` switch is never flipped.
+
+### What is implemented vs. pending
+
+**Implemented** (client + lifecycle, all mocked-tested): the `RetellClient`
+(`createPhoneCall`, single-shot/never-retried, DI-mockable fetch, bearer key only
+in the header), the config + `requireRetellConfig()` enforcement point, and the
+provider-neutral `CallRecord` lifecycle writers (`recordCallAttempt`,
+`attachProviderCallId`, `recordCallResult`) with duplicate-attempt prevention.
+
+**Pending on David / Retell:** the agent prompt's **dynamic-variable names** (the
+client supports dynamic variables but injects none — no `LeadCallContext`
+mapping is guessed); the **webhook** signature scheme, events and payload (the
+ingress is not built); the provider-result → `CallStatus`/`CallOutcome` **mapping**
+(`mapRetellResult()` returns `UNKNOWN` until confirmed); and the partial unique
+index on `call_records` (a DB-level dup backstop) must be applied as a migration
+before calling is ever enabled. Calendly remains untouched.
 
 ## Remaining questions for David
 
@@ -666,7 +694,7 @@ Everything below was run in this repository on Node 22.14.0.
 | `npm run typecheck`             | ✅ clean                                                                                                                                                  |
 | `npm run lint`                  | ✅ clean                                                                                                                                                  |
 | `npm run format:check`          | ✅ clean                                                                                                                                                  |
-| `npm test`                      | ✅ **233 tests, 13 files, all passing**                                                                                                                   |
+| `npm test`                      | ✅ **300 tests, 16 files, all passing**                                                                                                                   |
 | `npm run build`                 | ✅ compiles to `dist/`                                                                                                                                    |
 | `npm run prisma:validate`       | ✅ schema is valid                                                                                                                                        |
 | `npm run prisma:generate`       | ✅ client generated                                                                                                                                       |
@@ -714,14 +742,14 @@ Everything below was run in this repository on Node 22.14.0.
 
 ## Implementation phases
 
-| Phase | Scope                                                                              | Status      |
-| ----- | ---------------------------------------------------------------------------------- | ----------- |
-| **1** | Foundation: config, logging, Prisma, models, health, errors, tests                 | **done**    |
-| **2** | Lead API: read-only client, incremental polling, durable cursor, eligibility       | **done**    |
-| 3     | Retell: initiate calls, map call ids, authenticated idempotent webhooks            | not started |
-| 4     | Calendly: verify account, availability, booking, agent routing                     | not started |
-| 5     | CRM workflow: one note per call, assignment workflow, never change status          | not started |
-| 6     | Hardening: concurrency tests, rate limits, secrets, monitoring, backups, retention | not started |
+| Phase | Scope                                                                                                     | Status          |
+| ----- | --------------------------------------------------------------------------------------------------------- | --------------- |
+| **1** | Foundation: config, logging, Prisma, models, health, errors, tests                                        | **done**        |
+| **2** | Lead API: read-only client, incremental polling, durable cursor, eligibility                              | **done**        |
+| 3     | Retell: outbound call client done (mocked-tested, disabled by default); webhooks + result mapping pending | **in progress** |
+| 4     | Calendly: verify account, availability, booking, agent routing                                            | not started     |
+| 5     | CRM workflow: one note per call, assignment workflow, never change status                                 | not started     |
+| 6     | Hardening: concurrency tests, rate limits, secrets, monitoring, backups, retention                        | not started     |
 
 Phases 3-6 are a plan, not work in progress. Nothing in them is implemented and
 no provider contract has been assumed.

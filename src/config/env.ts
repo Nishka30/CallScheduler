@@ -159,12 +159,49 @@ const envSchema = z.object({
    * Deliberately INDEPENDENT of `LEAD_ELIGIBILITY_AUTO_ENABLED`: a lead becoming
    * ELIGIBLE must never be sufficient to place a call. While this is false, no
    * outbound call may be initiated regardless of eligibility - the enforcement
-   * point is `requireRetellCallingEnabled()`. It stays off until the Retell
-   * contract is confirmed and calling is explicitly approved. (The Retell API
-   * key, agent id and webhook secret are intentionally NOT added here yet: no
-   * client exists to use them, and adding them would trip the read-only guard.)
+   * point is `requireRetellCallingEnabled()`, called first inside the Retell
+   * client before any network request. It stays off until calling is explicitly
+   * approved; the successful manual dashboard test does not authorise it.
    */
   RETELL_CALLING_ENABLED: booleanFlag('false'),
+
+  /**
+   * Retell REST API base URL. Verified against the official OpenAPI spec:
+   * `POST /v2/create-phone-call` lives under `https://api.retellai.com`.
+   * Must be https so the bearer key is never sent in clear text.
+   */
+  RETELL_API_BASE_URL: z
+    .string()
+    .url('RETELL_API_BASE_URL must be an absolute URL')
+    .default('https://api.retellai.com')
+    .refine(
+      (value) => value.startsWith('https://'),
+      'RETELL_API_BASE_URL must use https so the API key is never sent in clear text',
+    )
+    .transform((value) => value.replace(/\/+$/, '')),
+
+  /**
+   * Bearer credential for the Retell API, sent as `Authorization: Bearer <key>`.
+   * Optional at startup (the server boots without it); `requireRetellConfig()`
+   * is the single place that enforces its presence. Never logged.
+   */
+  RETELL_API_KEY: optionalString(),
+
+  /** Registered Retell outbound number (caller ID), E.164. Validated at use. */
+  RETELL_FROM_NUMBER: optionalString(),
+
+  /** Id of the configured Retell agent that runs the call (the "Travel Call Agent"). */
+  RETELL_AGENT_ID: optionalString(),
+
+  /**
+   * Human-readable agent name, informational only. Surfaced in a safe log line
+   * so an operator can confirm the right agent is wired up; not sent to the API
+   * (the API selects the agent by id, not name).
+   */
+  RETELL_AGENT_NAME: optionalString(),
+
+  /** Per-request timeout for Retell calls. */
+  RETELL_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(60_000).default(15_000),
 });
 
 export type Env = z.infer<typeof envSchema>;
@@ -226,4 +263,53 @@ export function requireRetellCallingEnabled(source: Env = env): void {
       'RETELL_CALLING_ENABLED is false; outbound calling is disabled. No call was placed.',
     );
   }
+}
+
+/** The Retell credentials/config needed to place a call. */
+export interface RetellConfig {
+  baseUrl: string;
+  apiKey: string;
+  fromNumber: string;
+  agentId: string;
+  agentName?: string;
+  timeoutMs: number;
+}
+
+/** E.164: a leading '+', a non-zero country digit, then 6-14 more digits. */
+const E164 = /^\+[1-9]\d{6,14}$/;
+
+/**
+ * Resolves the Retell configuration, or throws an error that names the missing
+ * or malformed variables WITHOUT revealing any value.
+ *
+ * Enforcement is separate from `requireRetellCallingEnabled()` on purpose: the
+ * switch can be on while config is incomplete, and vice versa, and each failure
+ * should read clearly. The client calls the switch guard first, then this.
+ */
+export function requireRetellConfig(source: Env = env): RetellConfig {
+  const missing: string[] = [];
+  if (!source.RETELL_API_KEY) missing.push('RETELL_API_KEY');
+  if (!source.RETELL_FROM_NUMBER) missing.push('RETELL_FROM_NUMBER');
+  if (!source.RETELL_AGENT_ID) missing.push('RETELL_AGENT_ID');
+
+  if (missing.length > 0) {
+    throw new Error(
+      `Retell configuration incomplete: ${missing.join(', ')} not set. Add them in .env before calling.`,
+    );
+  }
+
+  // Names are safe to echo; the number itself is caller ID, not a secret, but we
+  // still only report the variable name on failure.
+  if (!E164.test(source.RETELL_FROM_NUMBER!)) {
+    throw new Error('RETELL_FROM_NUMBER must be a valid E.164 number (e.g. +19789538571).');
+  }
+
+  return {
+    baseUrl: source.RETELL_API_BASE_URL,
+    apiKey: source.RETELL_API_KEY!,
+    fromNumber: source.RETELL_FROM_NUMBER!,
+    agentId: source.RETELL_AGENT_ID!,
+    ...(source.RETELL_AGENT_NAME === undefined ? {} : { agentName: source.RETELL_AGENT_NAME }),
+    timeoutMs: source.RETELL_TIMEOUT_MS,
+  };
 }

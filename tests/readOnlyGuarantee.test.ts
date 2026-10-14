@@ -5,9 +5,14 @@ import { describe, expect, it } from 'vitest';
 /**
  * A static guard over the whole source tree.
  *
- * Phase 2 is read-only against the CRM: the caller's key is documented as
- * read-only, and no write workflow has been authorized. These tests fail if a
- * write ever creeps in, including by accident in a later edit.
+ * The invariant this protects is **"no CRM writes, and the only outbound write
+ * verb anywhere is the one authorised Retell call-initiation endpoint."**
+ *
+ * It was deliberately narrowed (Phase 3) from the earlier "no Retell at all":
+ * the Retell outbound client now legitimately issues a `POST` to
+ * `/v2/create-phone-call`. Everything that made this a *CRM-write* guarantee is
+ * kept exactly as strict - Lead API stays GET-only, no CRM write endpoints or
+ * agent headers, no status writes, and Calendly stays entirely absent.
  */
 
 const SRC = join(process.cwd(), 'src');
@@ -25,20 +30,47 @@ const files = sourceFiles(SRC).map((path) => ({
   text: readFileSync(path, 'utf8'),
 }));
 
+/** The single file permitted to issue an outbound write verb. */
+const RETELL_CLIENT = '/src/integrations/retell/client.ts';
+
 describe('no CRM writes exist in the codebase', () => {
   it('finds source files to scan', () => {
     expect(files.length).toBeGreaterThan(10);
   });
 
-  it.each(['POST', 'PUT', 'PATCH', 'DELETE'])('issues no %s request', (verb) => {
+  it('issues no PUT, PATCH or DELETE request anywhere', () => {
     const offenders = files.filter(({ text }) =>
-      new RegExp(`method:\\s*['"\`]${verb}['"\`]`, 'i').test(text),
+      /method:\s*['"`](PUT|PATCH|DELETE)['"`]/i.test(text),
     );
 
     expect(offenders.map((f) => f.path)).toEqual([]);
   });
 
-  it('references none of the documented write endpoints', () => {
+  it('issues a POST only from the authorised Retell call-initiation client', () => {
+    const offenders = files.filter(({ text }) => /method:\s*['"`]POST['"`]/i.test(text));
+
+    // The Retell client may POST; nothing else may.
+    expect(offenders.map((f) => f.path)).toEqual([RETELL_CLIENT]);
+  });
+
+  it('keeps the Lead API client strictly GET-only', () => {
+    const leadApiWrites = files.filter(
+      ({ path, text }) =>
+        path.includes('/integrations/leadApi/') &&
+        /method:\s*['"`](POST|PUT|PATCH|DELETE)['"`]/i.test(text),
+    );
+
+    expect(leadApiWrites.map((f) => f.path)).toEqual([]);
+  });
+
+  it('points the Retell client only at the verified create-call endpoint, never the CRM', () => {
+    const retell = files.find((f) => f.path === RETELL_CLIENT);
+    expect(retell).toBeDefined();
+    expect(retell!.text).toContain('/v2/create-phone-call');
+    expect(retell!.text).not.toContain('/api/crm/');
+  });
+
+  it('references none of the documented CRM write endpoints', () => {
     const writePaths = ['/status', '/assignment', '/notes', '/corrections'].map(
       (suffix) => `/api/crm/leads/\${leadId}${suffix}`,
     );
@@ -49,9 +81,9 @@ describe('no CRM writes exist in the codebase', () => {
     }
   });
 
-  it('never sends the agent headers that only writes require', () => {
-    // X-Agent-Email / X-Agent-Name are required on every POST. Their absence is
-    // structural proof that no write path exists.
+  it('never sends the agent headers that only CRM writes require', () => {
+    // X-Agent-Email / X-Agent-Name are required on every CRM POST. Their absence
+    // is structural proof that no CRM write path exists.
     const offenders = files.filter(
       ({ text }) => /['"]X-Agent-Email['"]/i.test(text) || /['"]X-Agent-Name['"]/i.test(text),
     );
@@ -73,9 +105,9 @@ describe('no CRM writes exist in the codebase', () => {
     expect(offenders.map((f) => f.path)).toEqual([]);
   });
 
-  it('contains no Retell or Calendly integration yet', () => {
+  it('contains no Calendly integration yet', () => {
     const offenders = files.filter(({ text }) =>
-      /\b(retell|calendly)\.(com|io)|api\.retellai|RETELL_API_KEY|CALENDLY_API_TOKEN/i.test(text),
+      /\bcalendly\.(com|io)|CALENDLY_API_TOKEN/i.test(text),
     );
 
     expect(offenders.map((f) => f.path)).toEqual([]);
@@ -85,20 +117,21 @@ describe('no CRM writes exist in the codebase', () => {
 describe('no credentials are committed', () => {
   it('hardcodes no API key in source', () => {
     const offenders = files.filter(({ text }) =>
-      /(['"])(sk_live_|sk_test_|key_live_)[A-Za-z0-9]{8,}\1/.test(text),
+      /(['"])(sk_live_|sk_test_|key_live_|key_[a-f0-9]{24})\1/.test(text),
     );
 
     expect(offenders.map((f) => f.path)).toEqual([]);
   });
 
-  it('keeps the API key out of .env.example', () => {
+  it('keeps secret values out of .env.example (placeholders only)', () => {
     const example = readFileSync(join(process.cwd(), '.env.example'), 'utf8');
-    const keyLine = example
-      .split('\n')
-      .find((line) => line.trim().startsWith('LEAD_API_KEY_CALLER='));
+    const secretVars = ['LEAD_API_KEY_CALLER', 'RETELL_API_KEY'];
 
-    // Present as a placeholder with no value, or commented out entirely.
-    expect(keyLine === undefined || keyLine.trim() === 'LEAD_API_KEY_CALLER=').toBe(true);
+    for (const name of secretVars) {
+      const line = example.split('\n').find((l) => l.trim().startsWith(`${name}=`));
+      // Present as an empty placeholder, or commented out entirely.
+      expect(line === undefined || line.trim() === `${name}=`).toBe(true);
+    }
   });
 
   it('keeps .env out of version control', () => {

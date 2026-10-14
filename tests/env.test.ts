@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { parseEnv, requireLeadApiKey, requireRetellCallingEnabled } from '../src/config/env.js';
+import {
+  parseEnv,
+  requireLeadApiKey,
+  requireRetellCallingEnabled,
+  requireRetellConfig,
+} from '../src/config/env.js';
 
 const VALID_DB_URL = 'postgresql://user:pass@localhost:5432/db?schema=public';
 
@@ -182,6 +187,76 @@ describe('Lead API configuration', () => {
   it('requireRetellCallingEnabled passes once calling is enabled', () => {
     const env = parseEnv(base({ RETELL_CALLING_ENABLED: 'true' }));
     expect(() => requireRetellCallingEnabled(env)).not.toThrow();
+  });
+
+  it('defaults the Retell base URL to the verified production host', () => {
+    expect(parseEnv(base()).RETELL_API_BASE_URL).toBe('https://api.retellai.com');
+  });
+
+  it('rejects a plaintext Retell base URL so the bearer key is never sent in clear', () => {
+    expect(() => parseEnv(base({ RETELL_API_BASE_URL: 'http://api.retellai.com' }))).toThrow(
+      /https/,
+    );
+  });
+
+  it('leaves Retell credentials optional so the server boots without them', () => {
+    const env = parseEnv(base());
+    expect(env.RETELL_API_KEY).toBeUndefined();
+    expect(env.RETELL_FROM_NUMBER).toBeUndefined();
+    expect(env.RETELL_AGENT_ID).toBeUndefined();
+  });
+
+  it('requireRetellConfig names every missing variable, never a value', () => {
+    const env = parseEnv(base());
+    let message = '';
+    try {
+      requireRetellConfig(env);
+    } catch (error) {
+      message = (error as Error).message;
+    }
+    expect(message).toContain('RETELL_API_KEY');
+    expect(message).toContain('RETELL_FROM_NUMBER');
+    expect(message).toContain('RETELL_AGENT_ID');
+  });
+
+  it('requireRetellConfig rejects a non-E.164 from-number', () => {
+    const env = parseEnv(
+      base({
+        RETELL_API_KEY: 'k',
+        RETELL_FROM_NUMBER: '1978-bad',
+        RETELL_AGENT_ID: 'a',
+      }),
+    );
+    expect(() => requireRetellConfig(env)).toThrow(/RETELL_FROM_NUMBER/);
+  });
+
+  it('requireRetellConfig returns the config once everything is set', () => {
+    const env = parseEnv(
+      base({
+        RETELL_API_KEY: 'k',
+        RETELL_FROM_NUMBER: '+19789538571',
+        RETELL_AGENT_ID: 'agent_1',
+        RETELL_AGENT_NAME: 'Travel Call Agent',
+      }),
+    );
+    expect(requireRetellConfig(env)).toEqual({
+      baseUrl: 'https://api.retellai.com',
+      apiKey: 'k',
+      fromNumber: '+19789538571',
+      agentId: 'agent_1',
+      agentName: 'Travel Call Agent',
+      timeoutMs: 15000,
+    });
+  });
+
+  it('never echoes the Retell key when another variable fails validation', () => {
+    const run = () => parseEnv(base({ RETELL_API_KEY: 'super-secret', PORT: 'nope' }));
+    expect(run).toThrow(/PORT/);
+    try {
+      run();
+    } catch (error) {
+      expect((error as Error).message).not.toContain('super-secret');
+    }
   });
 
   it('ships a conservative default status blocklist', () => {
