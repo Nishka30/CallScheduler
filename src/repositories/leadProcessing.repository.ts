@@ -101,6 +101,46 @@ export async function claimLeadForProcessing(
 }
 
 /**
+ * Transitions a claimed lead from PROCESSING into CALLING, once.
+ *
+ * This is the gate immediately before an outbound call: a lead must already be
+ * PROCESSING (claimed by this worker) and at the expected version. The
+ * conditional update matches on (`id`, `version`, `status = PROCESSING`) and
+ * bumps `version`, so a conflicting claim - another worker that already advanced
+ * the row, or a stale version - yields `count === 0` and this returns `null`
+ * instead of double-dialling.
+ *
+ * Returns the updated record (carrying the new `version`, which the caller needs
+ * to later `completeProcessing`), or `null` when the transition did not apply.
+ *
+ * Deliberately a separate state from PROCESSING: once a lead is CALLING,
+ * `requeueForRetry` refuses to touch it, so an uncertain in-flight call is never
+ * auto-redialled.
+ */
+export async function markCalling(
+  id: string,
+  expectedVersion: number,
+  now: Date = new Date(),
+): Promise<LeadProcessing | null> {
+  const { count } = await prisma.leadProcessing.updateMany({
+    where: { id, version: expectedVersion, status: ProcessingStatus.PROCESSING },
+    data: {
+      status: ProcessingStatus.CALLING,
+      version: { increment: 1 },
+      lastAttemptAt: now,
+    },
+  });
+
+  if (count === 0) {
+    // Not PROCESSING at the expected version: another worker advanced it first,
+    // or the claim was taken over. Do not proceed to a call.
+    return null;
+  }
+
+  return prisma.leadProcessing.findUniqueOrThrow({ where: { id } });
+}
+
+/**
  * Moves a claimed lead to a terminal state and releases the claim.
  *
  * Guarded by `version` so a worker whose claim already expired and was taken

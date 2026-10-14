@@ -27,6 +27,7 @@ const {
   claimLeadForProcessing,
   completeProcessing,
   ensureProcessingRecord,
+  markCalling,
   requeueForRetry,
   sanitizeErrorMessage,
 } = await import('../src/repositories/leadProcessing.repository.js');
@@ -175,6 +176,37 @@ describe('claimLeadForProcessing', () => {
     ]);
 
     expect([first, second].filter((r) => r !== null)).toHaveLength(1);
+  });
+});
+
+describe('markCalling', () => {
+  it('transitions a PROCESSING lead to CALLING with a version-guarded update', async () => {
+    const calling = record({ status: ProcessingStatus.CALLING, version: 5 });
+    const now = new Date('2026-03-01T09:00:00.000Z');
+    leadProcessing.updateMany.mockResolvedValue({ count: 1 });
+    leadProcessing.findUniqueOrThrow.mockResolvedValue(calling);
+
+    const result = await markCalling('id-1', 4, now);
+
+    expect(result).toEqual(calling);
+    expect(leadProcessing.updateMany).toHaveBeenCalledWith({
+      where: { id: 'id-1', version: 4, status: ProcessingStatus.PROCESSING },
+      data: {
+        status: ProcessingStatus.CALLING,
+        version: { increment: 1 },
+        lastAttemptAt: now,
+      },
+    });
+  });
+
+  it('returns null when a conflicting claim already advanced the row', async () => {
+    // version moved, or the lead is no longer PROCESSING -> do not double-dial.
+    leadProcessing.updateMany.mockResolvedValue({ count: 0 });
+
+    const result = await markCalling('id-1', 4);
+
+    expect(result).toBeNull();
+    expect(leadProcessing.findUniqueOrThrow).not.toHaveBeenCalled();
   });
 });
 

@@ -43,13 +43,14 @@ export interface LeadCallContext {
   /**
    * `caller_hold_until`, verbatim, when present and parsable.
    *
-   * Per the documented workflow, this reserves the lead for the AI Caller and
-   * blocks a human sales agent from claiming it through the CRM for the hold's
-   * duration - so its presence is informational timing for when a call should
-   * be attempted, not an eligibility gate (see `leadEligibility.service.ts`).
-   * We still cannot confirm this column is literally how that hold is
-   * exposed - every sampled row had it `null` - so this is carried through
-   * as-is and not acted upon here.
+   * An officially supported field (David's revised contract): an ISO timestamp
+   * or null. A future value reserves the lead for the AI Caller, blocking a
+   * human sales agent from claiming it through the CRM until the hold lapses.
+   * It is carried through as timing information for a future caller - NOT an
+   * eligibility gate (see `leadEligibility.service.ts`) - and is interpreted by
+   * `evaluateCallWindow()` in `callWindow.service.ts`. Its presence here never
+   * implies a call has been attempted; that is tracked separately per lead id
+   * in `callRecord.repository.ts`.
    */
   callerHoldUntil?: string;
 

@@ -264,9 +264,10 @@ never by itself a reason to call. Each row is judged in order:
 | 6   | `LEAD_ELIGIBILITY_AUTO_ENABLED` is on                       | `NEEDS_REVIEW` / `awaiting_new_lead_rule_confirmation`           |
 | 7   | validated E.164 phone verdict                               | `SKIPPED` / `phone_not_validated` (unreadable -> `NEEDS_REVIEW`) |
 
-Not a gate at all: `caller_hold_until`. It reserves the lead _for_ the AI
-Caller against human CRM claiming, so its presence is a reason to call soon,
-not a reason to skip — see [below](#caller_hold_until).
+Not an eligibility gate: `caller_hold_until`. It is a separate **timing window**
+that reserves the lead _for_ the AI Caller, evaluated on its own by
+`evaluateCallWindow()`; the eligibility rules above apply regardless of it — see
+[below](#caller_hold_until).
 
 **Two safety properties worth knowing about:**
 
@@ -364,45 +365,59 @@ context and also kept whole, so nothing is lost.
 
 ### `caller_hold_until`
 
-A real column on every row, but **never populated** in the sampled data. The
-_business concept_ it is assumed to represent is now confirmed directly by the
-product owner: a 10-minute hold that reserves a newly arrived lead **for the AI
-Caller**, blocking a human sales agent from claiming it through the CRM during
-that window. The hold ends early when a caller attempt is reported, or expires
-automatically otherwise.
+An **officially supported field** (David's revised contract) on the collector
+list and detail reads: an ISO-8601 timestamp or `null`. It reserves a newly
+arrived lead **for the AI Caller**, giving it the first opportunity to make
+contact before a human sales agent can claim the lead:
 
-That makes an earlier version of this check backwards: it treated a future
-`caller_hold_until` as a reason to **skip** the lead, as if the hold worked
-against the AI Caller rather than for it. It has been corrected - a hold is
-never used to gate eligibility. The timestamp is instead carried into the call
-context (`LeadCallContext.callerHoldUntil`) for a future caller to use when
-timing an attempt. We still cannot confirm that this specific column is how the
-hold is exposed via the API - it has been `null` in every row ever sampled -
-but the corrected logic no longer depends on that guess being right: a wrong
-mapping can only leave the context field empty, never cause a wrong skip or a
-wrong call.
+- **future timestamp → the hold is active.** The lead is held for the AI Caller,
+  so the call workflow may proceed — **subject to every other eligibility check**
+  (status, phone validation, assignment, etc.).
+- **`null`, past, or unparsable → no active hold.** The lead is available to the
+  sales team, so the AI Caller must **not** initiate a (late) call.
 
-## The five outstanding decisions
+This is a **timing window, not an eligibility rule**, and the two are kept
+strictly separate. `evaluateCallWindow()` in
+[callWindow.service.ts](src/services/callWindow.service.ts) answers only the
+go/no-go (`within_hold` vs `no_active_hold`, via `isHoldActive()`); the
+eligibility rules continue to apply in full regardless. The value is also carried
+into the call context (`LeadCallContext.callerHoldUntil`) for timing an attempt.
+
+**Hold duration is a Lead API setting, `CALLER_HOLD_MINUTES`.** David currently
+has it at **0**, so `caller_hold_until` comes back `null` for effectively every
+lead (every lead is `no_active_hold`). He will raise it to **10 minutes** when
+caller testing begins, at which point a fresh lead carries a ~10-minute future
+hold (`within_hold`). The logic handles both with no code change — it only
+compares the returned timestamp to the current time.
+
+**One important distinction:** this field reports only whether a hold is active.
+It never records whether a lead has already been **called**. Duplicate-call
+prevention is tracked separately, keyed by lead id, in
+[callRecord.repository.ts](src/repositories/callRecord.repository.ts).
+
+## The outstanding decisions
 
 Reviewed against the documented AI Caller workflow, the Lead API
 documentation, and the product owner's direct clarifications. Read-only GETs
 only; nothing was written.
 
-### Decision 1 — the 10-minute caller hold
+### Decision 1 — the caller hold
 
-| Item                                                                                                                               | Classification                                                                                                                    |
-| ---------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| A hold exists, reserves the lead for the AI Caller against human CRM claiming, ends on a reported attempt or expires automatically | **Confirmed directly by the product owner**                                                                                       |
-| Hold duration is 10 minutes (current test setting)                                                                                 | **Confirmed directly**                                                                                                            |
-| `caller_hold_until` is the API field that implements this hold                                                                     | **Still an assumption** — the column has been `null` in every row ever sampled, so its populated behavior has never been observed |
+| Item                                                                                                                 | Classification                                                              |
+| -------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| `caller_hold_until` is an officially supported field (ISO timestamp or `null`) on the list and detail reads          | **Confirmed by the revised contract**                                       |
+| Future timestamp = held for the AI Caller (may proceed); `null`/past = available to sales (do not place a late call) | **Confirmed by the revised contract**, implemented in `callWindow.service`  |
+| Hold duration is the Lead API's `CALLER_HOLD_MINUTES` — **0 today** (so `null`), **10** when caller testing begins   | **Confirmed directly**; both settings handled with no code change           |
+| The caller hold is a timing window, kept separate from the eligibility rules                                         | **Required**, enforced — `evaluateListEligibility` does not read this field |
 
-**This was a real bug, now fixed.** The previous version treated a future
-`caller_hold_until` as a reason to **skip** the lead — backwards, since the
-hold works _for_ the AI Caller, not against it. `evaluateListEligibility` no
-longer gates on this field at all; the value is only surfaced to
-`LeadCallContext.callerHoldUntil` for a future caller to use when timing an
-attempt. No CRM endpoint to set, extend, or release the hold has been invented
-or implemented — we only ever read whatever the API returns.
+**Implemented this round.** `evaluateCallWindow()` classifies a lead as
+`within_hold` (a future hold) or `no_active_hold` (`null`, past, or unparsable),
+and `isHoldActive()` gives the single go/no-go. A `within_hold` lead may proceed
+only if it also clears every eligibility check; a `no_active_hold` lead is never
+called late. The field is never treated as a "has been called" marker — that is
+tracked separately per lead id (see [Decision 6](#decision-6--duplicate-call-prevention)).
+No CRM endpoint to set, extend, or release the hold has been invented — we only
+ever read whatever the API returns.
 
 ### Decision 2 — what counts as a new lead
 
@@ -461,6 +476,22 @@ No write code exists ([readOnlyGuarantee.test.ts](tests/readOnlyGuarantee.test.t
 variable in `.env.example` (`CRM_AGENT_EMAIL`) — not consumed by any code yet,
 since no write path exists to use it.
 
+### Decision 6 — duplicate-call prevention
+
+| Item                                                                   | Classification                                                         |
+| ---------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| `caller_hold_until` must **not** be used as an "already called" marker | **Required**, enforced — it is only ever read as a timing window       |
+| Call attempts are tracked separately, keyed by lead id                 | **Implemented** in `callRecord.repository.ts` (the `call_records` row) |
+| A second attempt must not open while one is still unresolved           | **Implemented** — `recordCallAttempt()` refuses the duplicate          |
+| A database-level partial unique index for a hard guarantee             | **Prepared, not applied** — documented in the repository, for Phase 3  |
+
+Duplicate calls are prevented by two independent layers: the version-guarded
+claim on `lead_processing` (only one worker reaches the call step), and
+`recordCallAttempt()` (no second attempt while one is unresolved). No migration
+was applied this round; the recommended partial unique index on `call_records`
+is written up in [callRecord.repository.ts](src/repositories/callRecord.repository.ts)
+to be added when calls are actually created in Phase 3.
+
 ## Inspecting eligible leads without processing them
 
 ```bash
@@ -518,12 +549,14 @@ Three small, safe pieces were added, none of which contact Retell, Calendly, or
 the CRM:
 
 - **[callWindow.service.ts](src/services/callWindow.service.ts)** — a pure
-  function, `evaluateCallWindow()`, that classifies a lead as `within_hold`,
-  `hold_expired`, or `no_hold_info` from `LeadCallContext.callerHoldUntil`. It
-  makes no network call and decides nothing beyond that classification — see
-  the file's own comments for the three decisions (call after expiry? how is
-  an attempt reported? what about `no_hold_info`, the common case today?) it
-  deliberately leaves for Phase 3.
+  function, `evaluateCallWindow()` (plus `isHoldActive()`), that classifies a
+  lead as `within_hold` or `no_active_hold` from `caller_hold_until`. A future
+  hold means the AI Caller may proceed (subject to eligibility); a `null`, past,
+  or unparsable value means the lead is back with sales and must not be called
+  late. It makes no network call and decides nothing beyond that classification.
+- **[callRecord.repository.ts](src/repositories/callRecord.repository.ts)** —
+  call-attempt tracking keyed by lead id, separate from the hold, that refuses a
+  second attempt while one is unresolved (no migration applied).
 - **Newsletter visibility** in the preview (above).
 - A **dependencies list** for Retell and Calendly in
   [docs/architecture.md](docs/architecture.md#preparing-for-phase-3-retell-and-phase-4-calendly) —
@@ -536,9 +569,10 @@ built — doing so without a confirmed contract would mean inventing one.
 
 ## Remaining questions for David
 
-Resolved earlier: the hold's purpose and duration, the "new lead" rule (no
-fixed window), the exact three blocked statuses, and the canonical
-`X-Agent-Email`.
+Resolved: the hold's purpose and the `caller_hold_until` contract (future = held
+for the AI Caller; `null`/past = available to sales, do not call late), the
+"new lead" rule (no fixed window), the exact three blocked statuses, and the
+canonical `X-Agent-Email`.
 
 1. **Turn on automatic eligibility?** `LEAD_ELIGIBILITY_AUTO_ENABLED` stays
    `false` until you say otherwise.
@@ -546,18 +580,13 @@ fixed window), the exact three blocked statuses, and the canonical
    instruction not to add it without confirmation. Now measured: **67 of 108**
    (62%) of leads pending review in a 30-day sample carry this status — see
    [the operational finding above](#inspecting-eligible-leads-without-processing-them).
-3. **Is `caller_hold_until` really the hold field?** The business rule you
-   confirmed (10-minute hold, reserved for the AI Caller) no longer depends on
-   this being right — the value is only passed through as context, never used
-   to gate eligibility — but confirming the exact field would remove the last
-   assumption in this area.
+3. **When does `CALLER_HOLD_MINUTES` move to 10?** The logic already handles
+   both 0 (today, every hold `null`) and 10; this is just a heads-up that
+   turning it on is what makes any lead classify as `within_hold`.
 4. **How does a caller attempt end the hold early?** No endpoint for this
    exists in either document, and none has been invented, as instructed. Phase
-   3 cannot act on `evaluateCallWindow()`'s output without this.
-5. **Should a `hold_expired` lead still be called?** Deliberately left
-   undecided by `evaluateCallWindow()` - see
-   [docs/architecture.md](docs/architecture.md#preparing-for-phase-3-retell-and-phase-4-calendly)
-   for the full Retell/Calendly dependency list this blocks.
+   3 cannot report an attempt without this (a hold otherwise expires on its own
+   timer).
 
 ## npm scripts
 

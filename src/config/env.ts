@@ -148,6 +148,23 @@ const envSchema = z.object({
    * Configurable so a confirmed addition is a config change, not a code change.
    */
   LEAD_BLOCKED_STATUSES: commaList.default('Unsubscribe,Closed,Post Trip'),
+
+  // -------------------------------------------------------------------------
+  // Retell outbound calling (Phase 3).
+  // -------------------------------------------------------------------------
+
+  /**
+   * MASTER SWITCH for placing outbound calls, default OFF.
+   *
+   * Deliberately INDEPENDENT of `LEAD_ELIGIBILITY_AUTO_ENABLED`: a lead becoming
+   * ELIGIBLE must never be sufficient to place a call. While this is false, no
+   * outbound call may be initiated regardless of eligibility - the enforcement
+   * point is `requireRetellCallingEnabled()`. It stays off until the Retell
+   * contract is confirmed and calling is explicitly approved. (The Retell API
+   * key, agent id and webhook secret are intentionally NOT added here yet: no
+   * client exists to use them, and adding them would trip the read-only guard.)
+   */
+  RETELL_CALLING_ENABLED: booleanFlag('false'),
 });
 
 export type Env = z.infer<typeof envSchema>;
@@ -194,4 +211,19 @@ export function requireLeadApiKey(source: Env = env): string {
   }
 
   return key;
+}
+
+/**
+ * Single enforcement point for the outbound-calling master switch.
+ *
+ * Throws (never returns false) when calling is disabled, so a future call path
+ * fails closed and loudly rather than silently skipping the guard. No real call
+ * can be placed while `RETELL_CALLING_ENABLED` is false.
+ */
+export function requireRetellCallingEnabled(source: Env = env): void {
+  if (!source.RETELL_CALLING_ENABLED) {
+    throw new Error(
+      'RETELL_CALLING_ENABLED is false; outbound calling is disabled. No call was placed.',
+    );
+  }
 }

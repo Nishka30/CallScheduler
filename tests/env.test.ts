@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseEnv, requireLeadApiKey } from '../src/config/env.js';
+import { parseEnv, requireLeadApiKey, requireRetellCallingEnabled } from '../src/config/env.js';
 
 const VALID_DB_URL = 'postgresql://user:pass@localhost:5432/db?schema=public';
 
@@ -155,6 +155,33 @@ describe('Lead API configuration', () => {
 
   it('rejects a nonsense eligibility flag rather than defaulting it on', () => {
     expect(() => parseEnv(base({ LEAD_ELIGIBILITY_AUTO_ENABLED: 'maybe' }))).toThrow();
+  });
+
+  it('disables outbound calling by default', () => {
+    expect(parseEnv(base()).RETELL_CALLING_ENABLED).toBe(false);
+  });
+
+  it('keeps the calling switch independent of the eligibility switch', () => {
+    // Turning eligibility on must NOT turn calling on.
+    const env = parseEnv(base({ LEAD_ELIGIBILITY_AUTO_ENABLED: 'true' }));
+    expect(env.LEAD_ELIGIBILITY_AUTO_ENABLED).toBe(true);
+    expect(env.RETELL_CALLING_ENABLED).toBe(false);
+  });
+
+  it('accepts the common spellings of the calling flag', () => {
+    expect(parseEnv(base({ RETELL_CALLING_ENABLED: 'true' })).RETELL_CALLING_ENABLED).toBe(true);
+    expect(parseEnv(base({ RETELL_CALLING_ENABLED: '1' })).RETELL_CALLING_ENABLED).toBe(true);
+    expect(parseEnv(base({ RETELL_CALLING_ENABLED: 'no' })).RETELL_CALLING_ENABLED).toBe(false);
+  });
+
+  it('requireRetellCallingEnabled throws while calling is disabled', () => {
+    const env = parseEnv(base());
+    expect(() => requireRetellCallingEnabled(env)).toThrow(/RETELL_CALLING_ENABLED is false/);
+  });
+
+  it('requireRetellCallingEnabled passes once calling is enabled', () => {
+    const env = parseEnv(base({ RETELL_CALLING_ENABLED: 'true' }));
+    expect(() => requireRetellCallingEnabled(env)).not.toThrow();
   });
 
   it('ships a conservative default status blocklist', () => {

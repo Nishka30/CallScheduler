@@ -184,18 +184,18 @@ repository layer) only ever transitions a lead out of `PENDING` once, and
 bootstrap protection handles everything present before polling began. Together
 those two are sufficient; `created_at` only needs to exist and parse.
 
-**Also deliberately absent: a `caller_hold_until` gate.** Per the documented
-workflow, a hold reserves a new lead FOR the AI Caller - it blocks a human
-sales agent from claiming it through the CRM for the hold's duration (10
-minutes, confirmed directly by the product owner) - so its presence is a
-reason to call soon, not a reason to skip. An earlier version of this check
-treated a future `caller_hold_until` as a skip condition, which had the logic
-backwards. The value is still carried into the call context
-(`LeadCallContext.callerHoldUntil`) for a future caller to use when timing an
-attempt, but it is not used as an eligibility gate. We still cannot confirm
-that `caller_hold_until` is literally the field that implements this hold -
-every sampled row had it `null` - so nothing is built on that specific mapping
-beyond passing the value through.
+**Also deliberately absent: a `caller_hold_until` gate.** The caller hold is a
+timing window, not an eligibility rule, and the two are kept strictly separate
+(this is a hard requirement of the revised contract). `caller_hold_until` is now
+an officially supported field on the collector list and detail reads - an ISO
+timestamp or `null`. A future value reserves the lead FOR the AI Caller,
+blocking a human sales agent from claiming it until the hold lapses; a `null` or
+past value means the lead is already available to sales. That "is there an
+active hold, so may the AI Caller proceed?" question is answered on its own by
+`evaluateCallWindow()` in `callWindow.service.ts`, never by the eligibility
+rules above - every one of which still applies regardless of the hold. The
+value is also carried into the call context (`LeadCallContext.callerHoldUntil`)
+for a future caller to use when timing an attempt.
 
 ### What happens to a skipped lead
 
@@ -339,26 +339,21 @@ sampled over 90 days). No write was made.
 
 **Resolved by the product owner directly:**
 
-| Question                         | Answer                                                                                                                                                                       |
-| -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| How recent counts as "new"       | No fixed window - new means "not present at bootstrap, never decided before" (see above)                                                                                     |
-| Which statuses block calling     | Exactly `Unsubscribe`, `Closed`, `Post Trip` - no others added without confirmation                                                                                          |
-| Newsletter records               | Not excluded unless confirmed                                                                                                                                                |
-| Canonical write identity         | Confirmed as `ai-caller@himalayanwonders.com` for the future `X-Agent-Email` header, resolving the Lead API doc's inconsistent examples - not used yet, no write code exists |
-| Hold duration (business concept) | 10 minutes, confirmed directly; the hold is FOR the AI Caller, not against it                                                                                                |
+| Question                              | Answer                                                                                                                                                                            |
+| ------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| How recent counts as "new"            | No fixed window - new means "not present at bootstrap, never decided before" (see above)                                                                                          |
+| Which statuses block calling          | Exactly `Unsubscribe`, `Closed`, `Post Trip` - no others added without confirmation                                                                                               |
+| Newsletter records                    | Not excluded unless confirmed                                                                                                                                                     |
+| Canonical write identity              | Confirmed as `ai-caller@himalayanwonders.com` for the future `X-Agent-Email` header, resolving the Lead API doc's inconsistent examples - not used yet, no write code exists      |
+| `caller_hold_until` field             | Officially supported on the collector list and detail reads (revised contract): an ISO timestamp or null. A future value = held FOR the AI Caller; null/past = available to sales |
+| Hold duration (`CALLER_HOLD_MINUTES`) | A Lead API setting. Currently **0** (so `caller_hold_until` is `null` for effectively every lead); to be raised to **10 minutes** when caller testing begins                      |
 
-**Still unverified - the field-to-concept mapping, not the business rule:**
+**Still unverified:**
 
-1. **`caller_hold_until` as the hold's API representation.** The _business
-   concept_ (a 10-minute hold reserving the lead for the AI Caller) is
-   confirmed by the workflow documentation and the product owner. That this
-   specific column is how it is exposed via this API is still this codebase's
-   own inference from the field name - the column has been `null` in every
-   sampled row, so it has never actually been observed populated. The
-   corrected eligibility logic no longer depends on this guess being right:
-   the value is surfaced to the call context, never used to gate eligibility,
-   so a wrong mapping can only ever produce a context field that is empty when
-   it should not be - never a wrong skip or a wrong call.
+1. **How a caller attempt ends the hold early.** The workflow doc says a caller
+   attempt ends the hold early, but names no endpoint or mechanism. "Do not
+   invent CRM endpoints or writes to manage the hold" remains the rule until
+   this is confirmed; until then a hold simply expires on its own timer.
 2. **`profile.salesAgent` shape.** Null throughout the sample. Both a bare
    string and an object with `email` are accepted.
 
@@ -390,14 +385,26 @@ writes to the CRM, or books an appointment.
 - **Our own call storage.** The `CallRecord` Prisma model (lead id, provider
   call id, status, outcome, summary, timestamps) was defined in Phase 1 and
   needs no changes - it was already designed for a future call integration.
-- **The caller hold, read correctly.** `evaluateCallWindow()` (new this round,
-  in `callWindow.service.ts`) classifies a lead as `within_hold`,
-  `hold_expired`, or `no_hold_info` from `LeadCallContext.callerHoldUntil`. It
-  is pure and side-effect free - no network call, no database access - and
-  intentionally stops at classification. See the file's own documentation for
-  the three decisions it deliberately leaves to Phase 3 (whether to still call
-  after `hold_expired`, how a caller attempt is reported, and what policy to
-  apply to `no_hold_info`, which is the common case today).
+- **The caller hold, read correctly.** `evaluateCallWindow()` (in
+  `callWindow.service.ts`) classifies a lead as `within_hold` or
+  `no_active_hold` from `caller_hold_until`, per the revised contract: a future
+  timestamp is `within_hold` (held for the AI Caller, so the call workflow may
+  proceed subject to every other eligibility check); a `null`, past, or
+  unparsable value is `no_active_hold` (available to the sales team, so the AI
+  Caller must not place a late call). `isHoldActive()` exposes that single
+  go/no-go. It is pure and side-effect free - no network call, no database
+  access. Both Lead API hold settings are handled with no code change: at
+  `CALLER_HOLD_MINUTES = 0` (today) every lead is `no_active_hold`; at 10
+  minutes a fresh lead is `within_hold` until the window lapses.
+- **Call-attempt tracking, separate from the hold.** `caller_hold_until` only
+  reports whether a hold is active - never whether a lead has been called. That
+  is tracked independently per lead id in `callRecord.repository.ts`
+  (`recordCallAttempt`, `hasActiveCallAttempt`), which refuses to open a second
+  attempt while one is still unresolved. Combined with the version-guarded claim
+  in `lead_processing`, a lead cannot be dialled twice. A partial unique index
+  on `call_records` (documented in the repository) is recommended as a
+  database-level guard when calls are actually created in Phase 3; it is
+  **prepared but intentionally not applied** this round.
 
 ### What was deliberately NOT built
 
@@ -422,12 +429,11 @@ parsing, and a service layer that keeps business rules out of the HTTP layer.
    signature/auth scheme to verify an incoming webhook is genuine.
 5. How a call's outcome (summary, success/voicemail/no-answer) is reported
    back, and what maps onto `CallRecord.outcome`.
-6. **How a caller attempt is reported to the Lead API**, to end the 10-minute
-   hold early as the workflow document describes. No endpoint for this is
-   named in either document; it has to be confirmed before Phase 3 can act on
-   `evaluateCallWindow()`'s output.
-7. The product decision `evaluateCallWindow()` deliberately leaves open: should
-   the AI Caller still attempt a lead once `hold_expired`?
+6. **How a caller attempt is reported to the Lead API**, to end the hold early
+   as the workflow document describes. No endpoint for this is named in either
+   document; it has to be confirmed before Phase 3 can report an attempt.
+   (Whether to call an expired/absent hold is no longer open: the revised
+   contract settles it - `no_active_hold` means do not place a late call.)
 
 **Calendly (Phase 4):**
 

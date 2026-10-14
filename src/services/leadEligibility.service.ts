@@ -99,17 +99,16 @@ const CREATED_AT_COLUMN = 'created_at';
  * verified field or defers to NEEDS_REVIEW; nothing becomes ELIGIBLE on a
  * guess.
  *
- * Deliberately NOT checked here: `caller_hold_until`. Per the documented
- * workflow, a hold reserves a new lead FOR the AI Caller - it blocks a human
- * sales agent from claiming it through the CRM for the hold's duration (10
- * minutes, confirmed directly) - so its presence is a reason to call soon, not
- * a reason to skip. An earlier version of this file treated a future
- * `caller_hold_until` as a skip condition, which had the logic backwards. We
- * still cannot confirm that `caller_hold_until` is literally the field that
- * implements this hold - every sampled row had it `null` - so rather than
- * encode an eligibility rule on top of an unconfirmed field mapping, its value
- * is simply carried into the call context (`leadContext.service.ts`) for a
- * future caller to use when timing an attempt, and is not used as a gate here.
+ * Deliberately NOT checked here: `caller_hold_until`. The caller hold is a
+ * TIMING window, not an eligibility rule, and the two are kept strictly
+ * separate. Whether a hold is currently active is evaluated on its own in
+ * `callWindow.service.ts` (`evaluateCallWindow`); every rule in this function -
+ * `is_lead`, blocked statuses, bootstrap protection, `created_at`, phone
+ * validation - continues to apply regardless of the hold. A lead inside an
+ * active hold is eligible to proceed only if it ALSO clears every check here; a
+ * lead with no active hold is never made ineligible by that fact alone in this
+ * function - the "do not place a late call" decision belongs to the call-window
+ * stage, not to eligibility.
  */
 export function evaluateListEligibility(input: EligibilityInput): EligibilityDecision {
   const { row } = input;
