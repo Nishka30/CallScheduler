@@ -3,6 +3,7 @@ import helmet from 'helmet';
 import cors, { type CorsOptions } from 'cors';
 import { env } from './config/env.js';
 import { router } from './routes/index.js';
+import { retellWebhookRouter } from './routes/retell.routes.js';
 import { requestId } from './middleware/requestId.js';
 import { requestLogger } from './middleware/requestLogger.js';
 import { notFoundHandler } from './middleware/notFound.js';
@@ -47,6 +48,11 @@ export function createApp(): Express {
 
   app.use(requestId);
   app.use(requestLogger);
+
+  // Retell webhook is mounted BEFORE the global JSON parser: it needs the raw
+  // body bytes for signature verification, so it uses its own raw parser. It is
+  // isolated from lead polling and outbound-call initiation.
+  app.use('/webhooks/retell', retellWebhookRouter);
 
   app.use(express.json({ limit: JSON_BODY_LIMIT }));
   app.use(express.urlencoded({ extended: false, limit: JSON_BODY_LIMIT }));

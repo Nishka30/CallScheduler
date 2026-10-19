@@ -101,6 +101,56 @@ export async function claimLeadForProcessing(
 }
 
 /**
+ * Atomically claims an ELIGIBLE lead for a single caller worker.
+ *
+ * Mirrors `claimLeadForProcessing` but gates on `ELIGIBLE` rather than
+ * `PENDING`: polling marks a verified lead `ELIGIBLE`, and this is how the call
+ * orchestrator takes ownership of one for an outbound attempt. The conditional
+ * update matches on (`id`, `status = ELIGIBLE`, `version`) and bumps `version`,
+ * so when two workers race for the same lead exactly one gets the row and the
+ * other gets `null`.
+ *
+ * Returns `null` when the lead does not exist, is not ELIGIBLE, or was claimed
+ * by another worker first — never double-claims.
+ */
+export async function claimEligibleLead(
+  leadId: string,
+  workerId: string,
+  now: Date = new Date(),
+): Promise<LeadProcessing | null> {
+  return prisma.$transaction(async (tx) => {
+    const current = await tx.leadProcessing.findUnique({ where: { leadId } });
+
+    if (!current || current.status !== ProcessingStatus.ELIGIBLE) {
+      return null;
+    }
+
+    const { count } = await tx.leadProcessing.updateMany({
+      where: {
+        id: current.id,
+        status: ProcessingStatus.ELIGIBLE,
+        version: current.version,
+      },
+      data: {
+        status: ProcessingStatus.PROCESSING,
+        version: { increment: 1 },
+        attemptCount: { increment: 1 },
+        claimedAt: now,
+        claimedBy: workerId,
+        lastAttemptAt: now,
+      },
+    });
+
+    if (count === 0) {
+      // Another worker won the race between our read and our write.
+      return null;
+    }
+
+    return tx.leadProcessing.findUniqueOrThrow({ where: { id: current.id } });
+  });
+}
+
+/**
  * Transitions a claimed lead from PROCESSING into CALLING, once.
  *
  * This is the gate immediately before an outbound call: a lead must already be

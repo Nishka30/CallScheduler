@@ -483,3 +483,106 @@ describe('read-only guarantee', () => {
     expect(used.sort()).toEqual(['getLead', 'getPerson', 'listLeads']);
   });
 });
+
+describe('orchestrator wiring (call step)', () => {
+  it('does NOT invoke the call step when calling is disabled (normal poll path places no call)', async () => {
+    seedCursor();
+    const callInitiator = vi.fn();
+    // Default config: RETELL_CALLING_ENABLED false. Even with eligibility on and
+    // a fully eligible lead, the call step must never run.
+    const client = fakeClient([{ rows: [row('1')], nextCursor: null }]);
+
+    const summary = await runLeadPoll({ client, config: config(), callInitiator });
+
+    expect(callInitiator).not.toHaveBeenCalled();
+    expect(summary.callsConsidered).toBe(0);
+    expect(summary.byOutcome['ELIGIBLE']).toBe(1); // lead WAS eligible; just not called
+  });
+
+  it('does NOT invoke the call step when eligibility is on but calling is off', async () => {
+    seedCursor();
+    const callInitiator = vi.fn();
+    const client = fakeClient([{ rows: [row('1')], nextCursor: null }]);
+
+    await runLeadPoll({
+      client,
+      config: config({ RETELL_CALLING_ENABLED: 'false' }),
+      callInitiator,
+    });
+
+    expect(callInitiator).not.toHaveBeenCalled();
+  });
+
+  it('invokes the orchestrator for a freshly-ELIGIBLE lead when calling is enabled', async () => {
+    seedCursor();
+    const callInitiator = vi.fn().mockResolvedValue({ outcome: 'call_initiated', leadId: '1' });
+    const client = fakeClient([{ rows: [row('1')], nextCursor: null }]);
+
+    const summary = await runLeadPoll({
+      client,
+      config: config({ RETELL_CALLING_ENABLED: 'true' }),
+      callInitiator,
+    });
+
+    expect(callInitiator).toHaveBeenCalledTimes(1);
+    expect(callInitiator.mock.calls[0]![0]).toBe('1'); // leadId
+    expect(summary.callsConsidered).toBe(1);
+    expect(summary.callOutcomes['call_initiated']).toBe(1);
+  });
+
+  it('passes the config and Lead API client through to the orchestrator', async () => {
+    seedCursor();
+    const callInitiator = vi
+      .fn()
+      .mockResolvedValue({ outcome: 'rejected_hold_expired', leadId: '1' });
+    const client = fakeClient([{ rows: [row('1')], nextCursor: null }]);
+
+    await runLeadPoll({
+      client,
+      config: config({ RETELL_CALLING_ENABLED: 'true' }),
+      callInitiator,
+    });
+
+    const deps = callInitiator.mock.calls[0]![1] as { config: unknown; leadApiClient: unknown };
+    expect(deps.config).toBeDefined();
+    expect(deps.leadApiClient).toBe(client);
+  });
+
+  it('does not call ineligible / skipped leads', async () => {
+    seedCursor();
+    const callInitiator = vi.fn().mockResolvedValue({ outcome: 'call_initiated', leadId: 'x' });
+    const client = fakeClient([
+      { rows: [row('1', { is_deleted: true }), row('2', { is_lead: false })], nextCursor: null },
+    ]);
+
+    await runLeadPoll({
+      client,
+      config: config({ RETELL_CALLING_ENABLED: 'true' }),
+      callInitiator,
+    });
+
+    expect(callInitiator).not.toHaveBeenCalled();
+  });
+
+  it('does not re-call a lead that was already decided on a prior run', async () => {
+    seedCursor();
+    const callInitiator = vi.fn().mockResolvedValue({ outcome: 'call_initiated', leadId: '1' });
+    const cfg = config({ RETELL_CALLING_ENABLED: 'true' });
+
+    await runLeadPoll({
+      client: fakeClient([{ rows: [row('1')], nextCursor: null }]),
+      config: cfg,
+      callInitiator,
+    });
+    expect(callInitiator).toHaveBeenCalledTimes(1);
+
+    // Same lead reappears on a later poll (already decided) -> no second call.
+    seedCursor();
+    await runLeadPoll({
+      client: fakeClient([{ rows: [row('1')], nextCursor: null }]),
+      config: cfg,
+      callInitiator,
+    });
+    expect(callInitiator).toHaveBeenCalledTimes(1);
+  });
+});

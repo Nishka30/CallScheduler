@@ -18,6 +18,13 @@ import {
   type EligibilityDecision,
 } from './leadEligibility.service.js';
 import { buildLeadCallContext, describeContextForLog } from './leadContext.service.js';
+import { initiateCallForLead, type OrchestratorResult } from './callOrchestrator.service.js';
+
+/** Signature of the call step, injectable so tests can observe/stub it. */
+export type CallInitiator = (
+  leadId: string,
+  deps: { config: Env; leadApiClient: LeadApiClient },
+) => Promise<OrchestratorResult>;
 
 export interface PollSummary {
   pagesFetched: number;
@@ -25,6 +32,10 @@ export interface PollSummary {
   decisionsApplied: number;
   alreadyDecided: number;
   byOutcome: Record<string, number>;
+  /** How many freshly-ELIGIBLE leads the call step was invoked for this run. */
+  callsConsidered: number;
+  /** Tally of orchestrator outcomes (e.g. call_initiated, rejected_hold_expired). */
+  callOutcomes: Record<string, number>;
   /** True when this run performed the initial backfill. */
   bootstrap: boolean;
   /** Cursor persisted at the end of the run. */
@@ -39,6 +50,8 @@ export interface PollOptions {
   now?: () => Date;
   /** Fetch lead detail + person history for candidates. Default true. */
   fetchContext?: boolean;
+  /** Call step; defaults to the real orchestrator. Injected in tests. */
+  callInitiator?: CallInitiator;
 }
 
 /**
@@ -59,6 +72,7 @@ export async function runLeadPoll(options: PollOptions = {}): Promise<PollSummar
   const now = options.now ?? (() => new Date());
   const client = options.client ?? new LeadApiClient({}, config);
   const fetchContext = options.fetchContext ?? true;
+  const callInitiator = options.callInitiator ?? initiateCallForLead;
 
   const cursorRow = await getOrCreateCursor(LEAD_API_SOURCE);
   const bootstrap = isBootstrapPending(cursorRow);
@@ -69,6 +83,8 @@ export async function runLeadPoll(options: PollOptions = {}): Promise<PollSummar
     decisionsApplied: 0,
     alreadyDecided: 0,
     byOutcome: {},
+    callsConsidered: 0,
+    callOutcomes: {},
     bootstrap,
     finalCursor: cursorRow.cursor,
     warnings: [],
@@ -116,6 +132,7 @@ export async function runLeadPoll(options: PollOptions = {}): Promise<PollSummar
         client,
         config,
         fetchContext,
+        callInitiator,
         now: now(),
         summary,
       });
@@ -193,6 +210,7 @@ interface RowContext {
   client: LeadApiClient;
   config: Env;
   fetchContext: boolean;
+  callInitiator: CallInitiator;
   now: Date;
   summary: PollSummary;
 }
@@ -238,6 +256,22 @@ async function processRow(row: LeadListRow, ctx: RowContext): Promise<string> {
     // so a later note or status change cannot promote an old lead.
     ctx.summary.alreadyDecided += 1;
     return 'already_decided';
+  }
+
+  // Call step. Only a freshly-decided ELIGIBLE lead is handed to the
+  // orchestrator, and ONLY when outbound calling is switched on. With
+  // RETELL_CALLING_ENABLED=false (and with LEAD_ELIGIBILITY_AUTO_ENABLED=false
+  // nothing even reaches ELIGIBLE), the orchestrator is never invoked, so the
+  // normal poll path places no call. The orchestrator re-validates eligibility,
+  // phone verdict and the active caller hold against fresh detail before any
+  // dial, and records the attempt before contacting Retell.
+  if (decision.outcome === 'ELIGIBLE' && ctx.config.RETELL_CALLING_ENABLED) {
+    ctx.summary.callsConsidered += 1;
+    const call = await ctx.callInitiator(leadId, {
+      config: ctx.config,
+      leadApiClient: ctx.client,
+    });
+    ctx.summary.callOutcomes[call.outcome] = (ctx.summary.callOutcomes[call.outcome] ?? 0) + 1;
   }
 
   return decision.outcome;

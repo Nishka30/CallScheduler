@@ -1,4 +1,4 @@
-import { CallStatus, Prisma, type CallOutcome, type CallRecord } from '@prisma/client';
+import { CallOutcome, CallStatus, Prisma, type CallRecord } from '@prisma/client';
 import { prisma } from '../lib/prisma.js';
 
 /** Max length of the stored `summary` column (a short agent summary, never a transcript). */
@@ -223,5 +223,143 @@ export async function recordCallResult(
       ...(result.startedAt === undefined ? {} : { startedAt: result.startedAt }),
       ...(result.endedAt === undefined ? {} : { endedAt: result.endedAt }),
     },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Webhook event application (terminal-safe, order-independent, idempotent)
+//
+// Code-only — no schema change. The existing `call_records` columns already
+// carry everything needed; what was missing was merge logic that a redelivered
+// or out-of-order webhook cannot use to clobber a more authoritative result.
+// ---------------------------------------------------------------------------
+
+/**
+ * Status rank for a no-downgrade merge. Higher = more advanced. All terminal
+ * states share the top rank (first terminal wins); UNKNOWN sits below PENDING
+ * so it can never overwrite a known status.
+ */
+const STATUS_RANK: Record<CallStatus, number> = {
+  [CallStatus.UNKNOWN]: -1,
+  [CallStatus.PENDING]: 0,
+  [CallStatus.INITIATED]: 1,
+  [CallStatus.IN_PROGRESS]: 2,
+  [CallStatus.COMPLETED]: 3,
+  [CallStatus.FAILED]: 3,
+  [CallStatus.NO_ANSWER]: 3,
+  [CallStatus.BUSY]: 3,
+  [CallStatus.CANCELED]: 3,
+};
+
+const TERMINAL_STATUSES: ReadonlySet<CallStatus> = new Set([
+  CallStatus.COMPLETED,
+  CallStatus.FAILED,
+  CallStatus.NO_ANSWER,
+  CallStatus.BUSY,
+  CallStatus.CANCELED,
+]);
+
+export interface WebhookCallUpdate {
+  status: CallStatus;
+  outcome?: CallOutcome;
+  summary?: string;
+  startedAt?: Date;
+  endedAt?: Date;
+}
+
+type ExistingCallFields = Pick<
+  CallRecord,
+  'status' | 'outcome' | 'summary' | 'startedAt' | 'endedAt'
+>;
+
+/**
+ * Computes the SAFE subset of an incoming webhook update to apply over an
+ * existing record. Pure and side-effect free, so every merge rule is unit
+ * tested without a database.
+ *
+ * Rules (each field moves only in the safe direction, making the result
+ * independent of delivery order and idempotent under redelivery):
+ *
+ *   - status: never downgrades, never overwrites a terminal state, and is never
+ *     replaced by UNKNOWN. A later `call_started` cannot undo a `call_ended`.
+ *   - outcome: only fills in from null/UNKNOWN to a known value, so a late
+ *     `call_ended` (UNKNOWN) cannot erase the outcome a `call_analyzed` set.
+ *   - summary / startedAt / endedAt: written once (when currently empty), never
+ *     clobbered by a redelivery.
+ */
+export function computeSafeCallUpdate(
+  existing: ExistingCallFields,
+  incoming: WebhookCallUpdate,
+): Prisma.CallRecordUpdateInput {
+  const data: Prisma.CallRecordUpdateInput = {};
+
+  if (
+    incoming.status !== CallStatus.UNKNOWN &&
+    !TERMINAL_STATUSES.has(existing.status) &&
+    STATUS_RANK[incoming.status] > STATUS_RANK[existing.status]
+  ) {
+    data.status = incoming.status;
+  }
+
+  if (
+    incoming.outcome !== undefined &&
+    incoming.outcome !== CallOutcome.UNKNOWN &&
+    (existing.outcome === null || existing.outcome === CallOutcome.UNKNOWN)
+  ) {
+    data.outcome = incoming.outcome;
+  }
+
+  if (incoming.summary !== undefined && incoming.summary.length > 0 && existing.summary === null) {
+    data.summary = incoming.summary.slice(0, MAX_SUMMARY_LENGTH);
+  }
+
+  if (incoming.startedAt !== undefined && existing.startedAt === null) {
+    data.startedAt = incoming.startedAt;
+  }
+
+  if (incoming.endedAt !== undefined && existing.endedAt === null) {
+    data.endedAt = incoming.endedAt;
+  }
+
+  return data;
+}
+
+export interface ApplyWebhookResult {
+  /** False when no call record matches the provider call id. */
+  matched: boolean;
+  /** True when the merge actually changed a field. */
+  changed: boolean;
+  record?: CallRecord;
+}
+
+/**
+ * Applies a webhook event to the matching call record, keyed by the unique
+ * provider call id, with terminal-safe / order-independent merge semantics.
+ *
+ * The row is locked `FOR UPDATE` inside the transaction so two webhook
+ * deliveries that race cannot read-then-write over each other. An unknown
+ * provider id returns `matched: false` — a webhook for a call we have no record
+ * of never fabricates one, and is never attached to an unrelated lead.
+ */
+export async function applyWebhookCallEvent(
+  providerCallId: string,
+  incoming: WebhookCallUpdate,
+): Promise<ApplyWebhookResult> {
+  return prisma.$transaction(async (tx) => {
+    // Lock the row (if it exists) for the duration of the transaction.
+    await tx.$queryRaw`SELECT id FROM call_records WHERE "retellCallId" = ${providerCallId} FOR UPDATE`;
+
+    const existing = await tx.callRecord.findUnique({ where: { retellCallId: providerCallId } });
+    if (!existing) {
+      return { matched: false, changed: false };
+    }
+
+    const data = computeSafeCallUpdate(existing, incoming);
+    if (Object.keys(data).length === 0) {
+      return { matched: true, changed: false, record: existing };
+    }
+
+    const record = await tx.callRecord.update({ where: { id: existing.id }, data });
+    return { matched: true, changed: true, record };
   });
 }

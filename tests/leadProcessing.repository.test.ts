@@ -25,6 +25,7 @@ vi.mock('../src/lib/prisma.js', () => ({
 
 const {
   claimLeadForProcessing,
+  claimEligibleLead,
   completeProcessing,
   ensureProcessingRecord,
   markCalling,
@@ -89,6 +90,51 @@ describe('ensureProcessingRecord', () => {
 
     await expect(ensureProcessingRecord('lead-1')).rejects.toThrow('connection lost');
     expect(leadProcessing.findUniqueOrThrow).not.toHaveBeenCalled();
+  });
+});
+
+describe('claimEligibleLead', () => {
+  it('claims an ELIGIBLE lead with a version-guarded conditional update', async () => {
+    const eligible = record({ status: ProcessingStatus.ELIGIBLE });
+    const claimed = record({ status: ProcessingStatus.PROCESSING, version: 4 });
+    const now = new Date('2026-02-01T10:00:00.000Z');
+
+    leadProcessing.findUnique.mockResolvedValue(eligible);
+    leadProcessing.updateMany.mockResolvedValue({ count: 1 });
+    leadProcessing.findUniqueOrThrow.mockResolvedValue(claimed);
+
+    const result = await claimEligibleLead('lead-1', 'worker-a', now);
+
+    expect(result).toEqual(claimed);
+    const call = leadProcessing.updateMany.mock.calls[0]![0] as {
+      where: Record<string, unknown>;
+      data: Record<string, unknown>;
+    };
+    expect(call.where).toMatchObject({ status: ProcessingStatus.ELIGIBLE, version: 3 });
+    expect(call.data.status).toBe(ProcessingStatus.PROCESSING);
+    expect(call.data.claimedBy).toBe('worker-a');
+  });
+
+  it('refuses to claim a lead that is not ELIGIBLE', async () => {
+    leadProcessing.findUnique.mockResolvedValue(record({ status: ProcessingStatus.PENDING }));
+
+    const result = await claimEligibleLead('lead-1', 'worker-a');
+
+    expect(result).toBeNull();
+    expect(leadProcessing.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('returns null when another worker wins the race', async () => {
+    leadProcessing.findUnique.mockResolvedValue(record({ status: ProcessingStatus.ELIGIBLE }));
+    leadProcessing.updateMany.mockResolvedValue({ count: 0 });
+
+    expect(await claimEligibleLead('lead-1', 'worker-b')).toBeNull();
+    expect(leadProcessing.findUniqueOrThrow).not.toHaveBeenCalled();
+  });
+
+  it('returns null for an unknown lead', async () => {
+    leadProcessing.findUnique.mockResolvedValue(null);
+    expect(await claimEligibleLead('missing', 'worker-a')).toBeNull();
   });
 });
 

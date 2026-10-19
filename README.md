@@ -27,7 +27,8 @@ writes a single note back to the CRM.
 - Incremental lead polling with durable cursor and bootstrap protection
 - Explicit new-vs-changed lead eligibility, with automatic calling disabled
 - Retell outbound call client (`POST /v2/create-phone-call`), gated off by default
-- 300 unit/integration tests, ESLint + Prettier
+- Retell webhook ingress (`POST /webhooks/retell`): signature-verified, idempotent, terminal-safe
+- 385 unit/integration tests, ESLint + Prettier
 
 ## Architecture
 
@@ -479,19 +480,20 @@ since no write path exists to use it.
 
 ### Decision 6 — duplicate-call prevention
 
-| Item                                                                   | Classification                                                         |
-| ---------------------------------------------------------------------- | ---------------------------------------------------------------------- |
-| `caller_hold_until` must **not** be used as an "already called" marker | **Required**, enforced — it is only ever read as a timing window       |
-| Call attempts are tracked separately, keyed by lead id                 | **Implemented** in `callRecord.repository.ts` (the `call_records` row) |
-| A second attempt must not open while one is still unresolved           | **Implemented** — `recordCallAttempt()` refuses the duplicate          |
-| A database-level partial unique index for a hard guarantee             | **Prepared, not applied** — documented in the repository, for Phase 3  |
+| Item                                                                   | Classification                                                                    |
+| ---------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| `caller_hold_until` must **not** be used as an "already called" marker | **Required**, enforced — it is only ever read as a timing window                  |
+| Call attempts are tracked separately, keyed by lead id                 | **Implemented** in `callRecord.repository.ts` (the `call_records` row)            |
+| A second attempt must not open while one is still unresolved           | **Implemented** — `recordCallAttempt()` refuses the duplicate                     |
+| A database-level partial unique index for a hard guarantee             | **Applied** — `call_records_active_leadId_key` on `ai_caller`, verified enforcing |
 
-Duplicate calls are prevented by two independent layers: the version-guarded
-claim on `lead_processing` (only one worker reaches the call step), and
-`recordCallAttempt()` (no second attempt while one is unresolved). No migration
-was applied this round; the recommended partial unique index on `call_records`
-is written up in [callRecord.repository.ts](src/repositories/callRecord.repository.ts)
-to be added when calls are actually created in Phase 3.
+Duplicate calls are prevented by three layers now: the version-guarded claim on
+`lead_processing` (only one worker reaches the call step), `recordCallAttempt()`
+(no second attempt while one is unresolved), and the **applied** partial unique
+index `call_records_active_leadId_key` as the database-level backstop. Because a
+partial index can't live in `schema.prisma`, it is applied via
+`prisma migrate deploy` (apply-only) — do **not** run `prisma migrate dev`
+against `ai_caller`, which would see it as drift.
 
 ## Inspecting eligible leads without processing them
 
@@ -579,21 +581,57 @@ Leave `RETELL_CALLING_ENABLED=false` (the default). The client's first action in
 `.env` config. Tests enable the switch only on an isolated, injected config
 object; the global/`.env` switch is never flipped.
 
+### Webhook (`POST /webhooks/retell`)
+
+Implemented and mocked-tested. Verified against Retell's SDK (v6.2.6): the
+`x-retell-signature` header has the form `v=<ts>,d=<hexdigest>` and is
+**HMAC-SHA256 over `body + timestamp`, keyed by your `RETELL_API_KEY`** — there
+is **no separate webhook secret**, and there is a built-in **5-minute replay
+window**. Verification runs over the **raw** body (the route is mounted before
+the global JSON parser), constant-time, and **fails closed**: missing key → 503,
+missing/invalid signature → 401, malformed → 400.
+
+Events (`call_started`, `call_ended`, `call_analyzed`) are matched to a
+`CallRecord` by `call_id` and persisted with a **terminal-safe, order-independent,
+idempotent** merge: a redelivered or out-of-order event can never downgrade a
+terminal status, overwrite a known outcome with `UNKNOWN`, or create a duplicate
+record; an unknown `call_id` is acknowledged but never fabricates a lead link.
+Set the webhook URL in the Retell dashboard to `https://<host>/webhooks/retell`.
+
+> Because outbound calling is disabled and nothing yet stores a `retellCallId`,
+> every delivered webhook currently resolves to "unknown call id" (acknowledged,
+> no-op). That is expected until outbound calling is wired.
+
 ### What is implemented vs. pending
 
-**Implemented** (client + lifecycle, all mocked-tested): the `RetellClient`
-(`createPhoneCall`, single-shot/never-retried, DI-mockable fetch, bearer key only
-in the header), the config + `requireRetellConfig()` enforcement point, and the
-provider-neutral `CallRecord` lifecycle writers (`recordCallAttempt`,
-`attachProviderCallId`, `recordCallResult`) with duplicate-attempt prevention.
+**Implemented** (all mocked-tested): the `RetellClient`
+(`createPhoneCall`, single-shot/never-retried); the config enforcement points
+(`requireRetellConfig` / `requireRetellApiKey`); the `CallRecord` lifecycle
+writers with duplicate-attempt prevention; the **webhook ingress** (verification
 
-**Pending on David / Retell:** the agent prompt's **dynamic-variable names** (the
-client supports dynamic variables but injects none — no `LeadCallContext`
-mapping is guessed); the **webhook** signature scheme, events and payload (the
-ingress is not built); the provider-result → `CallStatus`/`CallOutcome` **mapping**
-(`mapRetellResult()` returns `UNKNOWN` until confirmed); and the partial unique
-index on `call_records` (a DB-level dup backstop) must be applied as a migration
-before calling is ever enabled. Calendly remains untouched.
+- validation + terminal-safe persistence); a **conservative outcome map**
+  (voicemail / no-answer / busy / invalid-number / explicit DNC / callback only —
+  completed conversations, `call_successful` and sentiment stay `UNKNOWN`, a
+  booking or interest is **never** inferred from a transcript); the
+  **database-level partial unique index** `call_records_active_leadId_key`
+  (applied to `ai_caller`); and the **end-to-end orchestrator**
+  `initiateCallForLead()` — switch/eligibility/phone/hold guards, atomic claim,
+  attempt-before-dial, and uncertain-vs-permanent failure handling — which is
+  disabled by default and **not wired into polling**.
+
+The orchestrator is now **wired into the poll**: a freshly-`ELIGIBLE` lead is
+handed to `initiateCallForLead` only when `RETELL_CALLING_ENABLED` is true (and a
+lead only reaches `ELIGIBLE` when `LEAD_ELIGIBILITY_AUTO_ENABLED` is true), so
+with both switches off the normal poll path places no call. The agent's two
+confirmed dynamic variables (`customer_name`, `brand_name`) are mapped from the
+lead context (missing values omitted, nothing else invented).
+
+**Pending:** the business-outcome half of the map (`INTERESTED`/`NOT_INTERESTED`/
+`APPOINTMENT_BOOKED`) which needs an authoritative Calendly result; the CRM
+note/assignment writes; and Calendly booking. **A live call also needs
+`CALLER_HOLD_MINUTES` set non-zero** on the Lead API side — with it at `0`, every
+lead's hold is `null`, so the hold gate (correctly) refuses to call. All 2000
+recently-sampled leads had `caller_hold_until: null`.
 
 ## Remaining questions for David
 
@@ -694,7 +732,7 @@ Everything below was run in this repository on Node 22.14.0.
 | `npm run typecheck`             | ✅ clean                                                                                                                                                  |
 | `npm run lint`                  | ✅ clean                                                                                                                                                  |
 | `npm run format:check`          | ✅ clean                                                                                                                                                  |
-| `npm test`                      | ✅ **300 tests, 16 files, all passing**                                                                                                                   |
+| `npm test`                      | ✅ **385 tests, 21 files, all passing**                                                                                                                   |
 | `npm run build`                 | ✅ compiles to `dist/`                                                                                                                                    |
 | `npm run prisma:validate`       | ✅ schema is valid                                                                                                                                        |
 | `npm run prisma:generate`       | ✅ client generated                                                                                                                                       |
@@ -742,14 +780,14 @@ Everything below was run in this repository on Node 22.14.0.
 
 ## Implementation phases
 
-| Phase | Scope                                                                                                     | Status          |
-| ----- | --------------------------------------------------------------------------------------------------------- | --------------- |
-| **1** | Foundation: config, logging, Prisma, models, health, errors, tests                                        | **done**        |
-| **2** | Lead API: read-only client, incremental polling, durable cursor, eligibility                              | **done**        |
-| 3     | Retell: outbound call client done (mocked-tested, disabled by default); webhooks + result mapping pending | **in progress** |
-| 4     | Calendly: verify account, availability, booking, agent routing                                            | not started     |
-| 5     | CRM workflow: one note per call, assignment workflow, never change status                                 | not started     |
-| 6     | Hardening: concurrency tests, rate limits, secrets, monitoring, backups, retention                        | not started     |
+| Phase | Scope                                                                                                                                                                      | Status          |
+| ----- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------- |
+| **1** | Foundation: config, logging, Prisma, models, health, errors, tests                                                                                                         | **done**        |
+| **2** | Lead API: read-only client, incremental polling, durable cursor, eligibility                                                                                               | **done**        |
+| 3     | Retell: outbound client + webhook ingress + end-to-end orchestrator + DB dup-index done (mocked-tested, disabled by default); wiring the orchestrator into polling pending | **in progress** |
+| 4     | Calendly: verify account, availability, booking, agent routing                                                                                                             | not started     |
+| 5     | CRM workflow: one note per call, assignment workflow, never change status                                                                                                  | not started     |
+| 6     | Hardening: concurrency tests, rate limits, secrets, monitoring, backups, retention                                                                                         | not started     |
 
 Phases 3-6 are a plan, not work in progress. Nothing in them is implemented and
 no provider contract has been assumed.

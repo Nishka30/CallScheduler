@@ -16,10 +16,15 @@ const callRecord = {
   count: vi.fn(),
 };
 
+const txQueryRaw = vi.fn();
+
 const prismaMock = {
   callRecord,
-  // Run the callback inline against the same mocked delegate.
-  $transaction: vi.fn((callback: (tx: unknown) => unknown) => callback({ callRecord })),
+  // Run the callback inline against the same mocked delegate; the tx also
+  // exposes $queryRaw for the FOR UPDATE row lock.
+  $transaction: vi.fn((callback: (tx: unknown) => unknown) =>
+    callback({ callRecord, $queryRaw: txQueryRaw }),
+  ),
 };
 
 vi.mock('../src/lib/prisma.js', () => ({
@@ -34,6 +39,8 @@ const {
   countCallAttempts,
   attachProviderCallId,
   recordCallResult,
+  computeSafeCallUpdate,
+  applyWebhookCallEvent,
 } = await import('../src/repositories/callRecord.repository.js');
 
 function row(overrides: Record<string, unknown> = {}): Record<string, unknown> {
@@ -285,5 +292,154 @@ describe('recordCallResult', () => {
 
     const data = callRecord.update.mock.calls[0]![0] as { data: { summary: string } };
     expect(data.data.summary.length).toBe(2000);
+  });
+});
+
+describe('computeSafeCallUpdate (pure terminal-safe merge)', () => {
+  const base = {
+    status: CallStatus.IN_PROGRESS,
+    outcome: null,
+    summary: null,
+    startedAt: null,
+    endedAt: null,
+  };
+
+  it('advances a non-terminal status forward', () => {
+    const data = computeSafeCallUpdate(
+      { ...base, status: CallStatus.INITIATED },
+      { status: CallStatus.IN_PROGRESS },
+    );
+    expect(data.status).toBe(CallStatus.IN_PROGRESS);
+  });
+
+  it('never downgrades a terminal status (call_ended then a late call_started)', () => {
+    const data = computeSafeCallUpdate(
+      { ...base, status: CallStatus.COMPLETED },
+      { status: CallStatus.IN_PROGRESS },
+    );
+    expect(data.status).toBeUndefined();
+  });
+
+  it('never lets one terminal status overwrite another (first terminal wins)', () => {
+    const data = computeSafeCallUpdate(
+      { ...base, status: CallStatus.COMPLETED },
+      { status: CallStatus.FAILED },
+    );
+    expect(data.status).toBeUndefined();
+  });
+
+  it('never overwrites a known status with UNKNOWN', () => {
+    const data = computeSafeCallUpdate(
+      { ...base, status: CallStatus.IN_PROGRESS },
+      { status: CallStatus.UNKNOWN },
+    );
+    expect(data.status).toBeUndefined();
+  });
+
+  it('upgrades outcome from null/UNKNOWN to a known value', () => {
+    expect(
+      computeSafeCallUpdate(base, { status: CallStatus.COMPLETED, outcome: CallOutcome.VOICEMAIL })
+        .outcome,
+    ).toBe(CallOutcome.VOICEMAIL);
+    expect(
+      computeSafeCallUpdate(
+        { ...base, outcome: CallOutcome.UNKNOWN },
+        { status: CallStatus.COMPLETED, outcome: CallOutcome.VOICEMAIL },
+      ).outcome,
+    ).toBe(CallOutcome.VOICEMAIL);
+  });
+
+  it('never overwrites a known outcome, and never writes UNKNOWN over it', () => {
+    const existing = { ...base, outcome: CallOutcome.APPOINTMENT_BOOKED };
+    expect(
+      computeSafeCallUpdate(existing, {
+        status: CallStatus.COMPLETED,
+        outcome: CallOutcome.VOICEMAIL,
+      }).outcome,
+    ).toBeUndefined();
+    expect(
+      computeSafeCallUpdate(existing, {
+        status: CallStatus.COMPLETED,
+        outcome: CallOutcome.UNKNOWN,
+      }).outcome,
+    ).toBeUndefined();
+  });
+
+  it('fills summary and timestamps once, then never clobbers them', () => {
+    const filled = computeSafeCallUpdate(base, {
+      status: CallStatus.COMPLETED,
+      summary: 'short summary',
+      startedAt: new Date('2026-10-15T10:00:00Z'),
+      endedAt: new Date('2026-10-15T10:05:00Z'),
+    });
+    expect(filled.summary).toBe('short summary');
+    expect(filled.startedAt).toEqual(new Date('2026-10-15T10:00:00Z'));
+
+    const already = {
+      ...base,
+      summary: 'original',
+      startedAt: new Date('2026-10-15T09:00:00Z'),
+      endedAt: new Date('2026-10-15T09:05:00Z'),
+    };
+    const second = computeSafeCallUpdate(already, {
+      status: CallStatus.COMPLETED,
+      summary: 'a different, later summary',
+      startedAt: new Date('2026-10-15T11:00:00Z'),
+      endedAt: new Date('2026-10-15T11:05:00Z'),
+    });
+    expect(second.summary).toBeUndefined();
+    expect(second.startedAt).toBeUndefined();
+    expect(second.endedAt).toBeUndefined();
+  });
+
+  it('truncates an over-long summary to the column limit', () => {
+    const data = computeSafeCallUpdate(base, {
+      status: CallStatus.COMPLETED,
+      summary: 'x'.repeat(5000),
+    });
+    expect((data.summary as string).length).toBe(2000);
+  });
+
+  it('returns an empty patch when nothing may safely change', () => {
+    const existing = {
+      status: CallStatus.COMPLETED,
+      outcome: CallOutcome.VOICEMAIL,
+      summary: 'done',
+      startedAt: new Date(),
+      endedAt: new Date(),
+    };
+    expect(computeSafeCallUpdate(existing, { status: CallStatus.IN_PROGRESS })).toEqual({});
+  });
+});
+
+describe('applyWebhookCallEvent', () => {
+  it('returns matched:false for an unknown provider call id (never fabricates)', async () => {
+    callRecord.findUnique.mockResolvedValue(null);
+
+    const result = await applyWebhookCallEvent('call-unknown', { status: CallStatus.COMPLETED });
+
+    expect(result).toEqual({ matched: false, changed: false });
+    expect(callRecord.update).not.toHaveBeenCalled();
+  });
+
+  it('locks the row, applies a safe change, and reports changed', async () => {
+    callRecord.findUnique.mockResolvedValue(row({ status: CallStatus.IN_PROGRESS }));
+    callRecord.update.mockResolvedValue(row({ status: CallStatus.COMPLETED }));
+
+    const result = await applyWebhookCallEvent('call-abc', { status: CallStatus.COMPLETED });
+
+    expect(txQueryRaw).toHaveBeenCalled(); // FOR UPDATE lock
+    expect(result.matched).toBe(true);
+    expect(result.changed).toBe(true);
+  });
+
+  it('is a no-op (changed:false) when the merge yields nothing to change', async () => {
+    callRecord.findUnique.mockResolvedValue(row({ status: CallStatus.COMPLETED }));
+
+    const result = await applyWebhookCallEvent('call-abc', { status: CallStatus.IN_PROGRESS });
+
+    expect(result.matched).toBe(true);
+    expect(result.changed).toBe(false);
+    expect(callRecord.update).not.toHaveBeenCalled();
   });
 });

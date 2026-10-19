@@ -4,9 +4,11 @@
 > stays disabled by default.** The `POST /v2/create-phone-call` client is built
 > and verified against Retell's official OpenAPI spec (2026-10-15). It is gated
 > behind `RETELL_CALLING_ENABLED` (default `false`), which is enforced **before
-> any network request**, so no real call can be placed. The webhook ingress and
-> the provider-result → enum mapping remain pending on details only David /
-> Retell can confirm, and are marked _CONFIRM_.
+> any network request**, so no real call can be placed. The **webhook ingress is
+> now implemented** (signature verification, validation, idempotent/order-safe
+> persistence) and the provider-result → enum mapping is filled in conservatively
+> against the verified vocabulary. What remains is wiring outbound calling into
+> polling (deliberately not done) and the Lead API hold-release endpoint.
 >
 > Nothing here enables automated processing (`LEAD_ELIGIBILITY_AUTO_ENABLED`
 > stays `false`), writes to the CRM, applies a migration, or wires the client
@@ -107,31 +109,55 @@ inquiries, bookings, calls, current agent/status).
   inventing the contract. Once David confirms them, the only new code is a small
   pure mapper from the (stable, tested) `LeadCallContext` fields to those names.
 
-## 5. Webhook contract — call status / completion
+## 5. Webhook contract — call status / completion (IMPLEMENTED)
 
-**Known / decided now:**
+**Verified contract** (Retell webhook docs + SDK v6.2.6 `lib/webhook_auth.js`,
+read from the published package — not guessed):
 
-- Mount at `POST /webhooks/retell` via `src/routes/retell.routes.ts`. Express
-  `express.json({ limit: '100kb' })` is already configured in
-  [`app.ts`](../src/app.ts) and comfortably fits webhook bodies.
-- **Must be authenticated** — the router in `routes/index.ts` already states that
-  anything exposing or writing lead data must be authenticated first. Signature
-  verification must run on the **raw** body, so a raw-body capture for this route
-  is required (the global JSON parser alone is not enough for HMAC).
-- **Idempotent by `retellCallId`.** `CallRecord.retellCallId` is already unique,
-  so a redelivered event resolves to the same row instead of creating a second.
-- The sink is provider-neutral (§6): the route verifies + parses, then calls the
-  lifecycle writer. No business logic in the HTTP layer.
+| Fact                  | Value                                                                         |
+| --------------------- | ----------------------------------------------------------------------------- |
+| Endpoint we expose    | `POST /webhooks/retell`                                                       |
+| Signature header      | `x-retell-signature`, form `v=<timestamp>,d=<hexdigest>`                      |
+| Algorithm             | HMAC-SHA256, hex, keyed by the **Retell API key**, over `rawBody + timestamp` |
+| Webhook secret        | **None separate** — the API key is the signing key                            |
+| Replay protection     | header timestamp must be within **5 minutes** of now (SDK default)            |
+| Comparison            | constant-time                                                                 |
+| Envelope              | `{ event, call }`                                                             |
+| Supported events      | `call_started`, `call_ended`, `call_analyzed`                                 |
+| Call id               | `call.call_id` (matched to `CallRecord.retellCallId`)                         |
+| Status / reason       | `call.call_status`, `call.disconnection_reason`                               |
+| Timestamps / analysis | `call.start_timestamp`, `call.end_timestamp` (ms), `call.call_analysis`       |
+| Expected response     | 2xx with no body                                                              |
 
-**Must be confirmed before the handler is written (_CONFIRM_):**
+**Implemented:**
 
-1. Signature/auth scheme: header name, algorithm, and what is signed.
-2. Event names and payload shape (one "call_ended" event? separate
-   started/ended/analyzed events?).
-3. Where in the payload the provider call id, call status, disconnection reason,
-   and any summary/analysis live.
-4. Retry/delivery semantics (at-least-once assumed; idempotency already covers
-   it).
+- [`webhookVerify.ts`](../src/integrations/retell/webhookVerify.ts) — a faithful
+  reimplementation of the SDK's `symmetric.verify` using Node `crypto`
+  (`timingSafeEqual`), including the 5-minute replay window. Fails closed on any
+  parse/length/stale/mismatch.
+- [`retell.routes.ts`](../src/routes/retell.routes.ts) + [`app.ts`](../src/app.ts)
+  — mounted with a **raw** body parser **before** the global JSON parser, so the
+  exact bytes are available for verification (re-serialised JSON would not
+  verify). Isolated from polling and outbound calling.
+- [`webhookSchemas.ts`](../src/integrations/retell/webhookSchemas.ts) — Zod
+  envelope + call-object validation; `call_id` is required.
+- [`retellWebhook.service.ts`](../src/services/retellWebhook.service.ts) —
+  verify → validate → map → persist, HTTP-agnostic and unit-tested. Secret
+  missing → `misconfigured` (503); missing/invalid signature → `unauthorized`
+  (401); malformed/invalid → `bad_request` (400); unsupported event → `ignored`
+  (200, no-op); unknown call id → `unmatched` (200, no fabrication); success →
+  `processed` (200). A DB error propagates to a 500 so Retell retries.
+- **Idempotent + order-independent** via `applyWebhookCallEvent` /
+  `computeSafeCallUpdate` (§6): keyed on the unique `retellCallId`, terminal
+  states are never downgraded, a known outcome is never overwritten with
+  `UNKNOWN`, and summary/timestamps are written once. Row-locked `FOR UPDATE`
+  against concurrent deliveries.
+
+**Operational note:** the webhook secret is the **already-provisioned
+`RETELL_API_KEY`**, so verification is functional now. But because outbound
+calling is still disabled and nothing creates `call_records` with a
+`retellCallId` yet, every delivered webhook currently resolves to `unmatched`
+(acknowledged, no-op). That is expected until outbound calling is wired.
 
 ## 6. How outcomes map to the existing call-recording flow
 
@@ -160,7 +186,7 @@ Target enums already exist in the schema:
   CALLBACK_REQUESTED, VOICEMAIL, WRONG_NUMBER, DO_NOT_CONTACT, NOT_REACHED,
   UNKNOWN
 
-### Blocked on David — the translation table (_CONFIRM_)
+### The translation table (now implemented conservatively)
 
 A pure `mapRetellResult(payload) -> { status, outcome }` function is the natural
 home, but its contents require Retell's actual values. Shape (values are
@@ -178,27 +204,46 @@ illustrative placeholders, **not** confirmed, default must be `UNKNOWN`):
 The default-to-`UNKNOWN` rule means an unexpected value can only ever leave a
 call under-classified for human review — never mislabelled as a success.
 
-## 7. End-to-end flow once unblocked (no new concurrency primitives needed)
+## 7. End-to-end flow — orchestrated in `callOrchestrator.service.ts`
+
+The sequence below is now wired together by `initiateCallForLead(leadId)` in
+[`callOrchestrator.service.ts`](../src/services/callOrchestrator.service.ts). It
+is **not** called from polling — it is invoked only by its tests — and its first
+action is the `RETELL_CALLING_ENABLED` guard, so a disabled system does nothing.
 
 ```
-eligible lead (list + phone checks pass)
-  -> re-fetch fresh detail; isHoldActive() == true        [callWindow.service]   implemented
-  -> markCalling: PROCESSING -> CALLING (version-guarded)  [leadProcessing.repo]  implemented
-  -> recordCallAttempt(leadId)  (dup guard)               [callRecord.repo]      implemented
-  -> requireRetellCallingEnabled()                        [config/env]           implemented (fails closed)
-  -> Retell create-call                                   [retell client]        IMPLEMENTED (mocked-tested)
-  -> attachProviderCallId(retellCallId): INITIATED        [callRecord.repo]      implemented
+initiateCallForLead(leadId)
+  -> requireRetellCallingEnabled()                        [config/env]           IMPLEMENTED (first; fails closed)
+  -> getLead (fresh detail)                               [leadApi client]       IMPLEMENTED (read-only)
+  -> hard eligibility re-check (deleted/not-lead/status)  [leadEligibility]      IMPLEMENTED
+  -> readPhoneVerdict -> validated E.164 only             [leadEligibility]      IMPLEMENTED
+  -> isHoldActive() == true (never call late)             [callWindow.service]   IMPLEMENTED
+  -> getPerson + buildLeadCallContext (best-effort)       [leadApi/leadContext]  IMPLEMENTED
+  -> claimEligibleLead: ELIGIBLE -> PROCESSING            [leadProcessing.repo]  IMPLEMENTED (version-guarded)
+  -> markCalling: PROCESSING -> CALLING                   [leadProcessing.repo]  IMPLEMENTED (version-guarded)
+  -> recordCallAttempt (dup guard + partial unique index) [callRecord.repo]      IMPLEMENTED
+  -> Retell create-call (single-shot)                     [retell client]        IMPLEMENTED
+  -> attachProviderCallId(retellCallId): INITIATED        [callRecord.repo]      IMPLEMENTED
   ...
-  POST /webhooks/retell (verify sig, idempotent)          [retell.routes]        *blocked on contract*
-  -> recordCallResult(retellCallId, mapRetellResult(...)) [callRecord.repo]      implemented (map = UNKNOWN until confirmed)
-  -> completeProcessing(CALLING -> COMPLETED/FAILED)      [leadProcessing.repo]  implemented
+  POST /webhooks/retell (verify sig, idempotent)          [retell.routes]        IMPLEMENTED
+  -> applyWebhookCallEvent(retellCallId, mapRetellResult) [callRecord.repo]      IMPLEMENTED (terminal-safe merge)
+  -> completeProcessing(CALLING -> COMPLETED/FAILED)      [leadProcessing.repo]  IMPLEMENTED
 ```
 
-The Retell create-call client is now implemented and tested with mocked
-requests; it fails closed while `RETELL_CALLING_ENABLED` is off. Only the
-webhook ingress remains blocked on its contract. Note the client is **not yet
-wired into polling** — no code path calls `createPhoneCall()` automatically; it
-is invoked only by its tests.
+Failure handling inside the orchestrator: a provider **timeout/5xx** is treated
+as _uncertain_ — the attempt is left `CALLING` for reconciliation, never retried
+and never marked failed (the call may have happened). A **permanent** provider
+error (auth/config/invalid destination/4xx) definitely did not dial, so the
+attempt is finalised `FAILED`. The orchestrator makes **no CRM writes** and never
+changes CRM lead status.
+
+The create-call client, webhook ingress, orchestrator AND its polling wiring are
+implemented and mocked-tested. The poll hands a freshly-`ELIGIBLE` lead to
+`initiateCallForLead` only when `RETELL_CALLING_ENABLED` is true; with both
+switches off the normal poll path places no call (proven by tests and against the
+real `.env`). The two confirmed agent dynamic variables (`customer_name`,
+`brand_name`) are mapped from the lead context by `buildAgentDynamicVariables`,
+missing values omitted, nothing else invented.
 
 `requeueForRetry()` already refuses to requeue a `CALLING` lead, so an uncertain
 in-flight call is never auto-redialled — that safety rule already covers Phase 3.
@@ -225,7 +270,26 @@ contract, no real call, no CRM write, no migration):
   (+ 28 tests, all mocked).
 - `RETELL_API_BASE_URL`, `RETELL_API_KEY`, `RETELL_FROM_NUMBER`,
   `RETELL_AGENT_ID`, `RETELL_AGENT_NAME`, `RETELL_TIMEOUT_MS` in `config/env.ts`
-  (secrets optional at startup) + `requireRetellConfig()` enforcement point.
+  (secrets optional at startup) + `requireRetellConfig()` / `requireRetellApiKey()`
+  enforcement points.
+- **Webhook ingress** (`webhookVerify.ts`, `webhookSchemas.ts`,
+  `retellWebhook.service.ts`, `retellWebhook.controller.ts`, `retell.routes.ts`,
+  mounted raw-body-first in `app.ts`) — signature verification keyed by the API
+  key with a 5-minute replay window, Zod-validated events, and terminal-safe,
+  order-independent, idempotent persistence via `applyWebhookCallEvent` /
+  `computeSafeCallUpdate` (+ tests).
+- **`mapRetellResult()` filled in conservatively** against the verified
+  `call_status` / `disconnection_reason` / `in_voicemail` vocabulary: voicemail,
+  no-answer, busy, invalid-number, explicit DNC and callback map to their
+  outcomes; completed conversations / `call_successful` / sentiment stay
+  `UNKNOWN` (booking and interest are never inferred).
+- **End-to-end orchestrator** `initiateCallForLead()` in
+  `callOrchestrator.service.ts` — wires claim -> markCalling -> recordCallAttempt
+  -> Retell create-call -> attachProviderCallId, with switch/eligibility/phone/
+  hold guards first and uncertain-vs-permanent failure handling. Disabled by
+  default and NOT wired into polling (+ 19 tests). Added `claimEligibleLead`
+  (ELIGIBLE -> PROCESSING) to the lead-processing repo to close the
+  ELIGIBLE-claim gap (+ tests).
 
 **The read-only guard was narrowed deliberately, not gutted.**
 `readOnlyGuarantee.test.ts` now allows exactly one `POST` — the Retell client's
@@ -235,12 +299,19 @@ endpoints or `X-Agent-Email`/`X-Agent-Name` headers, no `lead_status`/
 `trip_status` writes, and Calendly stays entirely absent. The Retell client is
 asserted to target only the create-call endpoint, never `/api/crm/`.
 
-**Database-level protection still required before real calls.** The partial
-unique index on `call_records` (documented in `callRecord.repository.ts`) is
-**not** applied — no migration was run. Today duplicate attempts are prevented by
-the `CALLING` claim + the unresolved-attempt check in `recordCallAttempt()`. The
-index must be applied as the DB-level backstop before `RETELL_CALLING_ENABLED` is
-ever turned on.
+**Database-level duplicate-call protection is now APPLIED.** The partial unique
+index `call_records_active_leadId_key` was added via migration
+`20261016000000_call_records_active_unique_index` and applied to the local
+`ai_caller` database (verified: enforcing — a second active attempt for a lead
+raises P2002, while a terminal + active pair coexists). It was created only
+after confirming zero conflicting active rows; no record was modified to force
+it. It backs the `CALLING` claim + the `recordCallAttempt()` check.
+
+> Note on Prisma drift: because a partial (filtered) unique index cannot be
+> expressed in `schema.prisma`, `prisma migrate dev` would see this index as
+> drift and try to drop it. This project applies migrations with
+> `prisma migrate deploy` (apply-only), which does not. Do not run
+> `prisma migrate dev` against `ai_caller`.
 
 **Resolved this phase:** base URL, bearer auth scheme, create-call endpoint and
 request schema (§0); the agent exists (the manual dashboard test succeeded, and
@@ -250,15 +321,19 @@ request schema (§0); the agent exists (the manual dashboard test succeeded, and
 
 1. The **dynamic-variable names** the Travel Call Agent prompt reads (the one
    remaining request-mapping detail; the client supports them but injects none).
-2. Webhook signature scheme, event names, and payload shape — the whole webhook
-   ingress waits on this.
-3. Retell's status / disconnection / analysis vocabulary → our `CallStatus` /
-   `CallOutcome` values (the §6 table); `mapRetellResult()` returns `UNKNOWN`
-   until then.
+2. The **dynamic-variable names** the Travel Call Agent prompt reads (only the
+   outbound request mapping; the client supports them but injects none).
+3. The business-outcome half of the mapping — INTERESTED / NOT_INTERESTED /
+   APPOINTMENT_BOOKED. These need an authoritative analysis/booking source
+   (Calendly), so they intentionally remain `UNKNOWN`; the telephony outcomes
+   are already mapped.
 4. **How a caller attempt is reported to end the Lead API hold early** — still
    unnamed in any document (carried over from Phase 2); no endpoint invented.
-5. The partial unique index on `call_records` (DB-level dup backstop) must be
-   applied as a migration before `RETELL_CALLING_ENABLED` is ever turned on.
+5. ~~The partial unique index on `call_records`~~ — DONE (applied this phase,
+   see above).
+
+Webhook signature scheme, event names and payload shape (previously blocked) are
+now verified and implemented — see §5.
 
 ## 9. Calendly — deliberately deferred
 

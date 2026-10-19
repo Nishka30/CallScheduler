@@ -265,6 +265,22 @@ export function requireRetellCallingEnabled(source: Env = env): void {
   }
 }
 
+/**
+ * Returns the Retell API key, or throws a value-free error if it is missing.
+ *
+ * This is the secret used to VERIFY inbound webhook signatures: Retell signs
+ * webhooks with your API key (confirmed from the official SDK v6.2.6 —
+ * `verify(body, apiKey, signature)`), so there is no separate webhook secret.
+ * It is a narrower guard than `requireRetellConfig()` because verifying a
+ * webhook needs only the key, not the from-number or agent id.
+ */
+export function requireRetellApiKey(source: Env = env): string {
+  if (!source.RETELL_API_KEY) {
+    throw new Error('RETELL_API_KEY is not configured; cannot verify Retell webhook signatures.');
+  }
+  return source.RETELL_API_KEY;
+}
+
 /** The Retell credentials/config needed to place a call. */
 export interface RetellConfig {
   baseUrl: string;
