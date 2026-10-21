@@ -234,6 +234,7 @@ function toListRow(leadId: string, detail: LeadDetail): LeadListRow {
     booked_call: cur['booked_call'],
     sales_agent_email: cur['sales_agent_email'],
     phone: cur['phone'],
+    whatsapp: cur['whatsapp'],
     person_key: detail.personKey ?? cur['person_key'],
   } as unknown as LeadListRow;
 }

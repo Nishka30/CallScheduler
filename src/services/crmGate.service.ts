@@ -6,10 +6,16 @@ import type { LeadListRow } from '../integrations/leadApi/schemas.js';
  * and of the hold-timing check in `callWindow.service.ts`: this covers the new
  * routing/ownership fields a lead must satisfy to be called at all.
  *
- * A lead is callable only when: a phone is present, it is not deleted, it has no
- * sales agent yet, no call is already booked, and `crm_route` is null (the hold
- * is still running). `crm_route` of `legacy` (already forwarded) or `crm` (a
- * call is already booked) is never called.
+ * A lead is callable only when: a contact number is present, it is not deleted,
+ * it has no sales agent yet, no call is already booked, and `crm_route` is null
+ * (the hold is still running). `crm_route` of `legacy` (already forwarded) or
+ * `crm` (a call is already booked) is never called.
+ *
+ * "A contact number is present" means EITHER `phone` OR `whatsapp` is set. The
+ * Himalayan Wonders funnel captures the caller's number in `whatsapp` and leaves
+ * `phone` null; the Lead API still validates that number into the detail-level
+ * `phone` verdict, which is the only value ever dialled (see `readPhoneVerdict`).
+ * This gate only checks presence, so it must look at both fields.
  *
  * NOTE: `crm_route` null is necessary but NOT sufficient — the active-hold
  * (future `caller_hold_until`) check is applied separately by the caller, per
@@ -32,8 +38,12 @@ export interface CrmGateResult {
 export function evaluateCrmGate(row: LeadListRow): CrmGateResult {
   const r = row as unknown as Record<string, unknown>;
 
-  const phone = r['phone'];
-  if (phone === null || phone === undefined || phone === '') {
+  // A number may live in `phone` or, for the Himalayan Wonders funnel, in
+  // `whatsapp`. Either one counts as "reachable"; the validated E.164 that is
+  // actually dialled comes from the detail-level phone verdict, not from here.
+  const hasNumber = (value: unknown): boolean =>
+    value !== null && value !== undefined && value !== '';
+  if (!hasNumber(r['phone']) && !hasNumber(r['whatsapp'])) {
     return { ok: false, reason: 'phone_absent' };
   }
 

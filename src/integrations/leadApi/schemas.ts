@@ -63,6 +63,13 @@ export const leadListRowSchema = z
     sales_agent_email: z.string().nullish(),
     /** The lead's phone (presence gates eligibility; validated number is on detail). */
     phone: z.unknown().nullish(),
+    /**
+     * The lead's WhatsApp number. The Himalayan Wonders funnel captures the
+     * caller's number here and leaves `phone` null, so the CRM gate treats either
+     * field as a present contact number. The dialled E.164 still comes from the
+     * detail-level phone verdict, which the Lead API derives from this number.
+     */
+    whatsapp: z.unknown().nullish(),
 
     person_key: z.string().min(1).nullish(),
     is_deleted: z.boolean().nullish(),

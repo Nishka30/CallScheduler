@@ -26,9 +26,17 @@ describe('evaluateCrmGate', () => {
     expect(evaluateCrmGate(row())).toEqual({ ok: true, reason: 'ok' });
   });
 
-  it('rejects a lead with no phone', () => {
+  it('passes a lead whose number is in whatsapp (phone null) - the Himalayan Wonders funnel shape', () => {
+    expect(evaluateCrmGate(row({ phone: null, whatsapp: '+916291764011' }))).toEqual({
+      ok: true,
+      reason: 'ok',
+    });
+  });
+
+  it('rejects a lead with no phone AND no whatsapp', () => {
     expect(evaluateCrmGate(row({ phone: null })).reason).toBe('phone_absent');
-    expect(evaluateCrmGate(row({ phone: '' })).reason).toBe('phone_absent');
+    expect(evaluateCrmGate(row({ phone: '', whatsapp: '' })).reason).toBe('phone_absent');
+    expect(evaluateCrmGate(row({ phone: null, whatsapp: null })).reason).toBe('phone_absent');
   });
 
   it('rejects a deleted lead', () => {

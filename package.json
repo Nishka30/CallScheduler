@@ -28,7 +28,8 @@
     "prisma:migrate:status": "prisma migrate status",
     "poll:leads": "tsx src/scripts/pollLeads.ts",
     "poll:leads:dry": "tsx src/scripts/pollLeads.ts --dry-run",
-    "poll:leads:preview": "tsx src/scripts/pollLeads.ts --preview"
+    "poll:leads:preview": "tsx src/scripts/pollLeads.ts --preview",
+    "call:lead": "tsx src/scripts/callOneLead.ts"
   },
   "dependencies": {
     "@prisma/client": "^6.5.0",
