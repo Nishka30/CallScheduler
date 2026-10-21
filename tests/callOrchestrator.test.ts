@@ -55,6 +55,11 @@ function detail(
       updated_at: '2026-10-16T11:55:00.000Z',
       caller_hold_until: FUTURE_HOLD,
       person_key: 'lead:1',
+      // Oct 20 routing/ownership fields — callable defaults.
+      phone: '+447700900123',
+      crm_route: null,
+      booked_call: null,
+      sales_agent_email: null,
       ...currentOverrides,
     },
     captured: {},
@@ -319,5 +324,30 @@ describe('initiateCallForLead — dialling', () => {
 
     expect(result).toMatchObject({ outcome: 'provider_failed', reason: 'auth' });
     expect(completeProcessing).toHaveBeenCalledWith('proc-1', 2, 'FAILED', expect.anything());
+  });
+});
+
+describe('initiateCallForLead — Oct 20 crm_route / ownership gate', () => {
+  it('rejects a lead already routed to legacy', async () => {
+    const deps = fakeClients(detail({ crm_route: 'legacy' }));
+    const r = await initiateCallForLead('lead-1', deps);
+    expect(r).toMatchObject({ outcome: 'rejected_eligibility', reason: 'crm_route_excluded' });
+    expect(claimEligibleLead).not.toHaveBeenCalled();
+  });
+
+  it('rejects a lead whose call is already booked (crm_route=crm)', async () => {
+    const deps = fakeClients(detail({ crm_route: 'crm' }));
+    expect((await initiateCallForLead('lead-1', deps)).outcome).toBe('rejected_eligibility');
+  });
+
+  it('rejects a lead that already has a sales agent', async () => {
+    const deps = fakeClients(detail({ sales_agent_email: 'sue@hw.com' }));
+    const r = await initiateCallForLead('lead-1', deps);
+    expect(r).toMatchObject({ outcome: 'rejected_eligibility', reason: 'already_assigned' });
+  });
+
+  it('rejects a lead that already has a booked_call', async () => {
+    const deps = fakeClients(detail({ booked_call: 'appt_1' }));
+    expect((await initiateCallForLead('lead-1', deps)).reason).toBe('already_booked');
   });
 });

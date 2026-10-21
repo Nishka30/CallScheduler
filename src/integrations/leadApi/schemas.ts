@@ -54,6 +54,16 @@ export const leadListRowSchema = z
     /** CONFIRMED present; never populated in the sampled data. */
     caller_hold_until: z.string().nullish(),
 
+    // Oct 20 brief routing/ownership fields (CONFIRMED present; currently null).
+    /** `null` = hold running (callable); `legacy` = forwarded; `crm` = call booked. */
+    crm_route: z.string().nullish(),
+    /** Set once a call is booked for the lead. */
+    booked_call: z.unknown().nullish(),
+    /** The lead's current sales agent; must be null to be callable. */
+    sales_agent_email: z.string().nullish(),
+    /** The lead's phone (presence gates eligibility; validated number is on detail). */
+    phone: z.unknown().nullish(),
+
     person_key: z.string().min(1).nullish(),
     is_deleted: z.boolean().nullish(),
     last_edit_at: z.string().nullish(),

@@ -7,6 +7,7 @@ import { RetellClient } from '../integrations/retell/client.js';
 import { RetellApiError } from '../integrations/retell/errors.js';
 import type { LeadDetail, LeadListRow } from '../integrations/leadApi/schemas.js';
 import { evaluateListEligibility, readPhoneVerdict } from './leadEligibility.service.js';
+import { evaluateCrmGate } from './crmGate.service.js';
 import { evaluateCallWindow, isHoldActive } from './callWindow.service.js';
 import { buildLeadCallContext, describeContextForLog } from './leadContext.service.js';
 import { buildAgentDynamicVariables } from '../integrations/retell/dynamicVariables.js';
@@ -119,6 +120,14 @@ export async function initiateCallForLead(
     return { outcome: 'rejected_eligibility', leadId, reason: eligibility.reason };
   }
 
+  // 3b. Oct 20 brief routing/ownership gate: phone present, not deleted, not yet
+  //     assigned, no booked call, and crm_route not legacy/crm. (The active-hold
+  //     check is applied separately at step 5.)
+  const crmGate = evaluateCrmGate(row);
+  if (!crmGate.ok) {
+    return { outcome: 'rejected_eligibility', leadId, reason: crmGate.reason };
+  }
+
   // 4. Phone verdict — only a validated E.164 number may be dialled.
   const verdict = readPhoneVerdict(detail.phone);
   if (verdict.status !== 'valid') {
@@ -221,6 +230,10 @@ function toListRow(leadId: string, detail: LeadDetail): LeadListRow {
     is_lead: cur['is_lead'],
     lead_status: cur['lead_status'],
     caller_hold_until: cur['caller_hold_until'],
+    crm_route: cur['crm_route'],
+    booked_call: cur['booked_call'],
+    sales_agent_email: cur['sales_agent_email'],
+    phone: cur['phone'],
     person_key: detail.personKey ?? cur['person_key'],
   } as unknown as LeadListRow;
 }

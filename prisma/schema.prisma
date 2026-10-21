@@ -183,3 +183,35 @@ model IntegrationCursor {
 
   @@map("integration_cursors")
 }
+
+/// Local record of a call booked through the Lead API calendar endpoint.
+///
+/// Mirrors only what the AI Caller needs operationally (which lead, which
+/// provider appointment, the agent, the time, the channel). David's CRM remains
+/// the source of truth for the appointment itself — this row just lets us tie a
+/// booking back to our call attempt and support reschedule/cancel by id.
+///
+/// No customer contact details, card, passport or payment data are stored here.
+model AppointmentRecord {
+  id String @id @default(uuid()) @db.Uuid
+
+  /// External Lead API lead id this booking belongs to.
+  leadId String @db.VarChar(128)
+
+  /// Provider appointment id (from POST /api/crm/appointments). Unique so
+  /// re-persisting the same booking is idempotent and PATCH can target it.
+  appointmentId String @unique @db.VarChar(128)
+
+  agentEmail  String?   @db.VarChar(320)
+  startsAt    DateTime? @db.Timestamptz(3)
+  status      String?   @db.VarChar(64)
+  meetingType String?   @db.VarChar(32)
+  /// decision.mode the team endpoint routed by: owner | pool.
+  decisionMode String?  @db.VarChar(16)
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  @@index([leadId])
+  @@map("appointment_records")
+}

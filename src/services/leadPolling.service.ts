@@ -109,7 +109,7 @@ export async function runLeadPoll(options: PollOptions = {}): Promise<PollSummar
     const result = await client.listLeads({
       ...(requestSince === undefined ? {} : { since: requestSince }),
       ...(requestCursor === undefined ? {} : { cursor: requestCursor }),
-      ...(config.LEAD_API_BRAND === undefined ? {} : { brand: config.LEAD_API_BRAND }),
+      brand: config.LEAD_API_BRAND ?? config.LEAD_TEST_BRAND,
       limit: config.LEAD_API_PAGE_SIZE,
     });
 

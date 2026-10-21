@@ -264,6 +264,20 @@ describe('Lead API configuration', () => {
     expect(parseEnv(base()).LEAD_BLOCKED_STATUSES).toContain('Post Trip');
   });
 
+  it('defaults the test scope to Himalayan Wonders (brand=HW)', () => {
+    expect(parseEnv(base()).LEAD_TEST_BRAND).toBe('HW');
+  });
+
+  it('allows the test brand to be overridden explicitly', () => {
+    expect(parseEnv(base({ LEAD_TEST_BRAND: 'PH' })).LEAD_TEST_BRAND).toBe('PH');
+  });
+
+  it('defaults the CRM write identity to the brief values', () => {
+    const env = parseEnv(base());
+    expect(env.CRM_AGENT_EMAIL).toBe('ai-caller@himalayanwonders.com');
+    expect(env.CRM_AGENT_NAME).toBe('AI Caller');
+  });
+
   it('caps the page size at the documented maximum', () => {
     expect(() => parseEnv(base({ LEAD_API_PAGE_SIZE: '500' }))).toThrow(/LEAD_API_PAGE_SIZE/);
     expect(parseEnv(base({ LEAD_API_PAGE_SIZE: '200' })).LEAD_API_PAGE_SIZE).toBe(200);

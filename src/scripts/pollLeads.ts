@@ -121,7 +121,7 @@ async function main(): Promise<void> {
     const page = await client.listLeads({
       since: env.LEAD_POLL_INITIAL_SINCE ?? new Date(Date.now() - 86_400_000).toISOString(),
       limit: Math.min(env.LEAD_API_PAGE_SIZE, 10),
-      ...(env.LEAD_API_BRAND === undefined ? {} : { brand: env.LEAD_API_BRAND }),
+      brand: env.LEAD_API_BRAND ?? env.LEAD_TEST_BRAND,
     });
 
     logger.info(

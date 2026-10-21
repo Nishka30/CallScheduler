@@ -29,6 +29,7 @@ writes a single note back to the CRM.
 - Retell outbound call client (`POST /v2/create-phone-call`), gated off by default
 - Retell webhook ingress (`POST /webhooks/retell`): signature-verified, idempotent, terminal-safe
 - 385 unit/integration tests, ESLint + Prettier
+- Calendar/booking client + brand-safe agent selection + appointment booking (reads live-verified; writes mocked until scope is enabled)
 
 ## Architecture
 
@@ -732,7 +733,7 @@ Everything below was run in this repository on Node 22.14.0.
 | `npm run typecheck`             | ✅ clean                                                                                                                                                  |
 | `npm run lint`                  | ✅ clean                                                                                                                                                  |
 | `npm run format:check`          | ✅ clean                                                                                                                                                  |
-| `npm test`                      | ✅ **385 tests, 21 files, all passing**                                                                                                                   |
+| `npm test`                      | ✅ **427 tests, 25 files, all passing**                                                                                                                   |
 | `npm run build`                 | ✅ compiles to `dist/`                                                                                                                                    |
 | `npm run prisma:validate`       | ✅ schema is valid                                                                                                                                        |
 | `npm run prisma:generate`       | ✅ client generated                                                                                                                                       |

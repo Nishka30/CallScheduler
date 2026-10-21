@@ -30,37 +30,33 @@ const files = sourceFiles(SRC).map((path) => ({
   text: readFileSync(path, 'utf8'),
 }));
 
-/** The single file permitted to issue an outbound write verb. */
+/** The files permitted to issue an outbound write verb. */
 const RETELL_CLIENT = '/src/integrations/retell/client.ts';
+/** The authorised CRM write client (appointments; brand-booking, per David's briefs). */
+const CALENDAR_CLIENT = '/src/integrations/leadApi/calendar.client.ts';
+/** The read-only Lead API client (lead list/detail/person). */
+const LEAD_READ_CLIENT = '/src/integrations/leadApi/client.ts';
 
-describe('no CRM writes exist in the codebase', () => {
+describe('no UNAUTHORISED CRM writes exist in the codebase', () => {
   it('finds source files to scan', () => {
     expect(files.length).toBeGreaterThan(10);
   });
 
-  it('issues no PUT, PATCH or DELETE request anywhere', () => {
-    const offenders = files.filter(({ text }) =>
-      /method:\s*['"`](PUT|PATCH|DELETE)['"`]/i.test(text),
-    );
-
+  it('issues no PUT or DELETE request anywhere', () => {
+    const offenders = files.filter(({ text }) => /method:\s*['"`](PUT|DELETE)['"`]/i.test(text));
     expect(offenders.map((f) => f.path)).toEqual([]);
   });
 
-  it('issues a POST only from the authorised Retell call-initiation client', () => {
+  it('issues write verbs only from the Retell and calendar clients', () => {
+    // Matches a real request (`method: <verb>`) or a method-union type annotation.
     const offenders = files.filter(({ text }) => /method:\s*['"`]POST['"`]/i.test(text));
-
-    // The Retell client may POST; nothing else may.
-    expect(offenders.map((f) => f.path)).toEqual([RETELL_CLIENT]);
+    expect(offenders.map((f) => f.path).sort()).toEqual([CALENDAR_CLIENT, RETELL_CLIENT].sort());
   });
 
-  it('keeps the Lead API client strictly GET-only', () => {
-    const leadApiWrites = files.filter(
-      ({ path, text }) =>
-        path.includes('/integrations/leadApi/') &&
-        /method:\s*['"`](POST|PUT|PATCH|DELETE)['"`]/i.test(text),
-    );
-
-    expect(leadApiWrites.map((f) => f.path)).toEqual([]);
+  it('keeps the Lead API READ client strictly GET-only', () => {
+    const readClient = files.find((f) => f.path === LEAD_READ_CLIENT);
+    expect(readClient).toBeDefined();
+    expect(/method:\s*['"`](POST|PUT|PATCH|DELETE)['"`]/i.test(readClient!.text)).toBe(false);
   });
 
   it('points the Retell client only at the verified create-call endpoint, never the CRM', () => {
@@ -70,25 +66,22 @@ describe('no CRM writes exist in the codebase', () => {
     expect(retell!.text).not.toContain('/api/crm/');
   });
 
-  it('references none of the documented CRM write endpoints', () => {
-    const writePaths = ['/status', '/assignment', '/notes', '/corrections'].map(
-      (suffix) => `/api/crm/leads/\${leadId}${suffix}`,
-    );
-
-    for (const writePath of writePaths) {
+  it('references none of the documented lead-status / corrections CRM write endpoints', () => {
+    // Appointments/notes/assignment are authorised; status and corrections are NOT.
+    const forbidden = ['/status', '/corrections'].map((s) => `/api/crm/leads/\${leadId}${s}`);
+    for (const writePath of forbidden) {
       const offenders = files.filter(({ text }) => text.includes(writePath));
       expect(offenders.map((f) => f.path)).toEqual([]);
     }
   });
 
-  it('never sends the agent headers that only CRM writes require', () => {
-    // X-Agent-Email / X-Agent-Name are required on every CRM POST. Their absence
-    // is structural proof that no CRM write path exists.
+  it('sends the X-Agent-Email write identity only from the calendar client', () => {
+    // The fixed service identity is required on authorised CRM writes; it must
+    // appear only in the calendar client and nowhere else.
     const offenders = files.filter(
       ({ text }) => /['"]X-Agent-Email['"]/i.test(text) || /['"]X-Agent-Name['"]/i.test(text),
     );
-
-    expect(offenders.map((f) => f.path)).toEqual([]);
+    expect(offenders.map((f) => f.path)).toEqual([CALENDAR_CLIENT]);
   });
 
   // Matches an assignment of a literal value, e.g. `lead_status: 'Booked'`.

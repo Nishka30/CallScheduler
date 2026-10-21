@@ -116,7 +116,7 @@ export async function previewLeadEligibility(
     const result = await client.listLeads({
       ...(cursor === undefined ? { since: options.since } : { cursor }),
       limit: config.LEAD_API_PAGE_SIZE,
-      ...(config.LEAD_API_BRAND === undefined ? {} : { brand: config.LEAD_API_BRAND }),
+      brand: config.LEAD_API_BRAND ?? config.LEAD_TEST_BRAND,
     });
 
     summary.pagesFetched += 1;

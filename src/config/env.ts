@@ -150,6 +150,26 @@ const envSchema = z.object({
   LEAD_BLOCKED_STATUSES: commaList.default('Unsubscribe,Closed,Post Trip'),
 
   // -------------------------------------------------------------------------
+  // Calendar / booking (Oct 20 brief).
+  // -------------------------------------------------------------------------
+
+  /**
+   * TEST SCOPE: the brand code to poll for during the initial test. The Oct 20
+   * brief restricts the test to Himalayan Wonders (`brand=HW`). Explicit and
+   * configurable so it is clearly a test restriction, not a permanent one — a
+   * production rollout widens or clears it.
+   */
+  LEAD_TEST_BRAND: z.string().min(1).default('HW'),
+
+  /**
+   * Fixed caller write identity, sent on every authorised CRM write as
+   * `X-Agent-Email` + `X-Agent-Name`. Not secrets (an address + a label); kept
+   * in config so they are not hard-coded. Defaults match the brief.
+   */
+  CRM_AGENT_EMAIL: z.string().min(1).default('ai-caller@himalayanwonders.com'),
+  CRM_AGENT_NAME: z.string().min(1).default('AI Caller'),
+
+  // -------------------------------------------------------------------------
   // Retell outbound calling (Phase 3).
   // -------------------------------------------------------------------------
 
