@@ -47,16 +47,65 @@ describe('buildAgentDynamicVariables', () => {
     );
   });
 
-  it('invents no other variables (no trip/destination/budget/date)', () => {
+  it('maps the full destination-aware trip context into snake_case variables', () => {
     const vars = buildAgentDynamicVariables(
       context({
-        customerName: 'John',
-        brand: 'himalayan',
-        trek: 'Everest Base Camp',
-        timing: 'March',
-        tripLength: '2 weeks',
+        customerName: 'Nishka',
+        brand: 'himalayanwonders.com',
+        enquiredDestination: 'Nepal',
+        trek: 'Everest region',
+        tripLength: '5–7 days',
+        groupSize: 'Individual',
+        experience: 'A few short hikes',
+        timing: '2026',
+        specificRequirements: 'I want a trip for 4 days',
       }),
     );
-    expect(vars).toEqual({ customer_name: 'John', brand_name: 'himalayan' });
+    expect(vars).toEqual({
+      customer_name: 'Nishka',
+      brand_name: 'himalayanwonders.com',
+      enquired_destination: 'Nepal',
+      preferred_trek: 'Everest region',
+      trip_duration: '5–7 days',
+      group_size: 'Individual',
+      travel_experience: 'A few short hikes',
+      travel_timing: '2026',
+      special_requirements: 'I want a trip for 4 days',
+    });
+  });
+
+  it('omits each trip variable independently when its value is missing', () => {
+    // A Nepal enquiry that only answered destination + trek: nothing else invented.
+    const vars = buildAgentDynamicVariables(
+      context({ customerName: 'Nishka', enquiredDestination: 'Nepal', trek: 'Everest region' }),
+    );
+    expect(vars).toEqual({
+      customer_name: 'Nishka',
+      enquired_destination: 'Nepal',
+      preferred_trek: 'Everest region',
+    });
+  });
+
+  it('drops blank or whitespace-only trip answers rather than sending them', () => {
+    const vars = buildAgentDynamicVariables(
+      context({ enquiredDestination: 'Nepal', trek: '   ', tripLength: '', groupSize: '2' }),
+    );
+    expect(vars).toEqual({ enquired_destination: 'Nepal', group_size: '2' });
+  });
+
+  it('never leaks contact or secret fields into the Retell variables', () => {
+    const vars = buildAgentDynamicVariables(
+      context({
+        customerName: 'Nishka',
+        enquiredDestination: 'Nepal',
+        phoneE164: '+916291764011',
+        phoneTier: 'live_mobile',
+        leadFields: { country: 'IN' },
+      }),
+    );
+    const serialized = JSON.stringify(vars);
+    expect(serialized).not.toContain('916291764011');
+    expect(serialized).not.toContain('live_mobile');
+    expect(Object.keys(vars).sort()).toEqual(['customer_name', 'enquired_destination']);
   });
 });

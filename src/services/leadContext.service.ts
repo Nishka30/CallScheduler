@@ -39,6 +39,14 @@ export interface LeadCallContext {
   city?: string;
   /** Free-text the customer typed on the form. */
   freeText?: string;
+  /**
+   * The destination the lead originally enquired about, derived from the funnel
+   * page they completed (`page_slug`, e.g. `nepal` → `Nepal`). This is the
+   * submitted enquiry, NOT anything the customer says on the call; the two are
+   * kept distinct so the agent can reference the enquiry and still let the
+   * customer change it.
+   */
+  enquiredDestination?: string;
 
   /**
    * `caller_hold_until`, verbatim, when present and parsable.
@@ -61,6 +69,12 @@ export interface LeadCallContext {
   timing?: string;
   experience?: string;
   beenBefore?: string;
+  /**
+   * The lead's own "specific requirements / questions" answer (or the form's
+   * free text if that question was not asked). Free-form customer intent — never
+   * treated as a confirmed fact, only as something the agent can acknowledge.
+   */
+  specificRequirements?: string;
 
   /** All answers, kept whole so nothing is lost by the mapping above. */
   answers: FormAnswer[];
@@ -95,6 +109,7 @@ const QUESTION_IDS = {
   timing: 'timing', // "When are you looking to start the trek?"
   experience: 'experience', // "How much trekking or hiking experience do you have?"
   beenBefore: 'been_before', // "Have you been trekking in Nepal before?"
+  specific: 'specific', // "Do you have any specific requirements or questions?"
 } as const;
 
 /** Columns never copied into call context, confirmed against the live schema. */
@@ -178,6 +193,12 @@ export function buildLeadCallContext(
   const freeText = read('free_text');
   if (freeText) context.freeText = freeText;
 
+  // Destination the lead enquired about. `page_slug` is the funnel page they
+  // completed (e.g. `nepal`); we present it readably but never invent a value.
+  const pageSlug = read('page_slug');
+  const enquiredDestination = pageSlug ? humanizeSlug(pageSlug) : undefined;
+  if (enquiredDestination) context.enquiredDestination = enquiredDestination;
+
   const callerHoldRaw = read('caller_hold_until');
   if (callerHoldRaw && parseTimestamp(callerHoldRaw) !== null) {
     context.callerHoldUntil = callerHoldRaw;
@@ -202,6 +223,11 @@ export function buildLeadCallContext(
 
   const beenBefore = byId.get(QUESTION_IDS.beenBefore);
   if (beenBefore) context.beenBefore = beenBefore;
+
+  // The lead's own free-form requirements. Prefer the dedicated question; fall
+  // back to the form free text when that question was not part of the funnel.
+  const specificRequirements = byId.get(QUESTION_IDS.specific) ?? context.freeText;
+  if (specificRequirements) context.specificRequirements = specificRequirements;
 
   if (options.history) {
     context.history = summarizePersonHistory(options.history);
@@ -305,6 +331,22 @@ function collectLeadFields(
   return merged;
 }
 
+/**
+ * Turns a funnel page slug into a readable destination label without inventing
+ * anything: separators become spaces and each word is capitalised. `nepal` →
+ * `Nepal`, `everest-base-camp` → `Everest Base Camp`. Returns undefined for a
+ * slug that carries no letters/digits, so junk is dropped rather than spoken.
+ */
+function humanizeSlug(slug: string): string | undefined {
+  const words = slug
+    .trim()
+    .split(/[\s\-_]+/)
+    .map((word) => word.trim())
+    .filter((word) => /[a-z0-9]/i.test(word));
+  if (words.length === 0) return undefined;
+  return words.map((word) => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
+}
+
 function asShortString(value: unknown): string | undefined {
   if (typeof value === 'string') {
     const trimmed = value.trim();
@@ -329,8 +371,10 @@ export function describeContextForLog(context: LeadCallContext): Record<string, 
     // A timestamp, not personal data - useful to see the call-attempt deadline.
     callerHoldUntil: context.callerHoldUntil,
     hasName: context.customerName !== undefined,
+    hasEnquiredDestination: context.enquiredDestination !== undefined,
     hasTrek: context.trek !== undefined,
     hasTiming: context.timing !== undefined,
+    hasSpecificRequirements: context.specificRequirements !== undefined,
     answerCount: context.answers.length,
     leadFieldCount: Object.keys(context.leadFields).length,
     priorInquiries: context.history?.priorInquiryCount,

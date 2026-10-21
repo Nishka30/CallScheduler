@@ -96,6 +96,51 @@ describe('buildLeadCallContext', () => {
     expect(context.beenBefore).toBe('No');
   });
 
+  it('derives the enquired destination from the funnel page slug, readably', () => {
+    expect(
+      buildLeadCallContext('1', detail({ captured: { ...detail().captured, page_slug: 'nepal' } }))
+        .enquiredDestination,
+    ).toBe('Nepal');
+    expect(
+      buildLeadCallContext(
+        '1',
+        detail({ captured: { ...detail().captured, page_slug: 'everest-base-camp' } }),
+      ).enquiredDestination,
+    ).toBe('Everest Base Camp');
+  });
+
+  it('omits the enquired destination when there is no page slug, and never copies page_slug into leadFields', () => {
+    const context = buildLeadCallContext('1', detail());
+    expect(context.enquiredDestination).toBeUndefined();
+    expect(context.leadFields).not.toHaveProperty('page_slug');
+  });
+
+  it('takes specific requirements from the dedicated answer when present', () => {
+    const base = detail();
+    const context = buildLeadCallContext(
+      '1',
+      detail({
+        answers: [
+          ...base.answers!,
+          {
+            questionId: 'specific',
+            prompt: 'Any specific requirements?',
+            answer: 'I want a trip for 4 days',
+            position: 7,
+          },
+        ],
+      }),
+    );
+    expect(context.specificRequirements).toBe('I want a trip for 4 days');
+  });
+
+  it('falls back to the form free text for specific requirements when that question is absent', () => {
+    // The base fixture has free_text but no `specific` answer.
+    expect(buildLeadCallContext('1', detail()).specificRequirements).toBe(
+      'Looking for a guided trek',
+    );
+  });
+
   it('keeps every answer whole alongside the mapped fields', () => {
     const context = buildLeadCallContext('1', detail());
 
