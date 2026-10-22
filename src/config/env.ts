@@ -222,6 +222,39 @@ const envSchema = z.object({
 
   /** Per-request timeout for Retell calls. */
   RETELL_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(60_000).default(15_000),
+
+  // -------------------------------------------------------------------------
+  // Background lead worker (automatic polling).
+  // -------------------------------------------------------------------------
+
+  /**
+   * Starts the in-process background worker that runs `runLeadPoll()` on a timer,
+   * so leads are detected, ingested, classified and (when calling is enabled)
+   * handed to the orchestrator WITHOUT a manual `npm run poll:leads`.
+   *
+   * Default OFF so simply running the HTTP server never starts polling or dialling
+   * by surprise. Automatic operation = set this true in the deployment. It is
+   * INDEPENDENT of the two safety switches: the worker classifies leads even when
+   * calling is disabled, and actual dialling still requires RETELL_CALLING_ENABLED
+   * (enforced inside `runLeadPoll`/the orchestrator), while ELIGIBLE classification
+   * still requires LEAD_ELIGIBILITY_AUTO_ENABLED.
+   */
+  LEAD_WORKER_ENABLED: booleanFlag('false'),
+
+  /** Delay between the end of one poll cycle and the start of the next. */
+  LEAD_WORKER_INTERVAL_MS: z.coerce.number().int().min(5_000).max(3_600_000).default(60_000),
+
+  /** Upper bound for the exponential backoff applied after consecutive failures. */
+  LEAD_WORKER_MAX_BACKOFF_MS: z.coerce.number().int().min(5_000).max(3_600_000).default(300_000),
+
+  /**
+   * When true, each poll cycle is guarded by a Postgres advisory lock so that
+   * across multiple replicas only ONE polls at a time (avoids redundant Lead API
+   * reads). Duplicate CALLS are already prevented at the DB regardless (the
+   * version-guarded claim + the `call_records_active_leadId_key` unique index);
+   * this flag only reduces redundant polling. Default OFF (single-process).
+   */
+  LEAD_WORKER_USE_DB_LOCK: booleanFlag('false'),
 });
 
 export type Env = z.infer<typeof envSchema>;

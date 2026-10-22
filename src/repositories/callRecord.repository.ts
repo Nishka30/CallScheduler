@@ -125,6 +125,19 @@ export async function findActiveCallAttempt(leadId: string): Promise<CallRecord 
   });
 }
 
+/**
+ * Looks up the call attempt a provider call id belongs to.
+ *
+ * This is the secure binding between a live Retell call and its lead: we stamped
+ * `retellCallId` when WE placed the call (`attachProviderCallId`), so the lead on
+ * the returned row is authoritative. A Retell function/tool request is tied to
+ * its lead through this lookup on `call.call_id` — never through a lead id the
+ * model supplies. `retellCallId` is unique, so this returns at most one row.
+ */
+export async function findByRetellCallId(providerCallId: string): Promise<CallRecord | null> {
+  return prisma.callRecord.findUnique({ where: { retellCallId: providerCallId } });
+}
+
 /** True when a lead already has a call attempt that is still in flight. */
 export async function hasActiveCallAttempt(leadId: string): Promise<boolean> {
   return (await findActiveCallAttempt(leadId)) !== null;
