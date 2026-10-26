@@ -10,6 +10,12 @@ export interface ShutdownDependencies {
   disconnect: () => Promise<void>;
   /** Terminates the process. Injected so the behaviour can be unit tested. */
   exit: (code: number) => void;
+  /**
+   * Stops the background lead worker, awaiting any in-flight poll cycle. Called
+   * FIRST so no new cycle (and no new call) can start while we tear down. A
+   * failure here never blocks shutdown — it is logged and we continue.
+   */
+  stopWorker?: () => Promise<void>;
   timeoutMs?: number;
 }
 
@@ -41,6 +47,16 @@ export function createShutdownHandler(
     forceExit.unref?.();
 
     let exitCode = 0;
+
+    if (deps.stopWorker) {
+      try {
+        await deps.stopWorker();
+        logger.info('lead worker stopped');
+      } catch (error) {
+        // Never block shutdown on worker teardown; the force-exit timer remains.
+        logger.error({ err: toLoggableError(error) }, 'error stopping lead worker');
+      }
+    }
 
     try {
       await deps.closeServer();

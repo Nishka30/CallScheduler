@@ -36,6 +36,40 @@ describe('graceful shutdown', () => {
     expect(d.exit).toHaveBeenCalledWith(0);
   });
 
+  it('stops the lead worker FIRST, before closing the server and database', async () => {
+    const order: string[] = [];
+    const d = deps({
+      stopWorker: vi.fn(() => {
+        order.push('worker');
+        return Promise.resolve();
+      }),
+      closeServer: vi.fn(() => {
+        order.push('server');
+        return Promise.resolve();
+      }),
+      disconnect: vi.fn(() => {
+        order.push('database');
+        return Promise.resolve();
+      }),
+    });
+
+    await createShutdownHandler(d)('SIGTERM');
+
+    expect(order).toEqual(['worker', 'server', 'database']);
+    expect(d.exit).toHaveBeenCalledWith(0);
+  });
+
+  it('does not fail shutdown when stopping the worker throws', async () => {
+    const d = deps({ stopWorker: vi.fn().mockRejectedValue(new Error('worker stuck')) });
+
+    await createShutdownHandler(d)('SIGTERM');
+
+    // Worker teardown is best-effort; server/db still close and exit stays 0.
+    expect(d.closeServer).toHaveBeenCalledTimes(1);
+    expect(d.disconnect).toHaveBeenCalledTimes(1);
+    expect(d.exit).toHaveBeenCalledWith(0);
+  });
+
   it('is idempotent across repeated signals', async () => {
     const d = deps();
     const shutdown = createShutdownHandler(d);
