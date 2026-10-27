@@ -252,6 +252,36 @@ export async function findByLeadId(leadId: string): Promise<LeadProcessing | nul
   return prisma.leadProcessing.findUnique({ where: { leadId } });
 }
 
+/** A NEEDS_REVIEW lead that may be worth re-evaluating, with its retry-scheduling fields. */
+export interface ReevaluableLead {
+  id: string;
+  leadId: string;
+  decisionReason: string | null;
+  decidedAt: Date | null;
+  version: number;
+}
+
+/**
+ * Returns up to `limit` leads currently in NEEDS_REVIEW whose recorded reason is
+ * one of `reasons` (the data-availability gaps worth retrying), oldest decision
+ * first. This is a cheap LOCAL query used by the re-evaluation sweep to pick
+ * candidates; the sweep then throttles per-lead before making any Lead API call,
+ * so this returning already-throttled rows costs only local DB time, never a
+ * Lead API request.
+ */
+export async function findReevaluableLeads(
+  reasons: readonly string[],
+  limit: number,
+): Promise<ReevaluableLead[]> {
+  if (reasons.length === 0) return [];
+  return prisma.leadProcessing.findMany({
+    where: { status: ProcessingStatus.NEEDS_REVIEW, decisionReason: { in: [...reasons] } },
+    orderBy: { decidedAt: 'asc' },
+    take: limit,
+    select: { id: true, leadId: true, decisionReason: true, decidedAt: true, version: true },
+  });
+}
+
 /** Max length of the stored `decisionDetail` column. */
 const MAX_DETAIL_LENGTH = 300;
 
@@ -325,6 +355,46 @@ export async function recordLeadDecision(
 
   // count === 0 means another worker decided this lead between our read and
   // our write; its decision stands.
+  return { applied: count === 1, record: latest };
+}
+
+/**
+ * Re-applies a decision for a lead currently stuck in `NEEDS_REVIEW`, when the
+ * original reason was a DATA-AVAILABILITY gap (e.g. the phone verdict was not
+ * yet populated, or auto-eligibility was off) rather than a business decision.
+ *
+ * Deliberately separate from `recordLeadDecision`, which never transitions a
+ * lead OUT of NEEDS_REVIEW (correctly - a later note/status edit must never
+ * promote an old lead). This function is the explicit, narrow exception: it is
+ * called ONLY from `leadReevaluation.service.ts`, ONLY for one lead id at a
+ * time, on deliberate operator request - never from the automatic poll loop.
+ *
+ * Version-guarded CAS matching only `status = NEEDS_REVIEW`: it can NEVER touch
+ * a PENDING, ELIGIBLE, SKIPPED, PROCESSING, CALLING, COMPLETED or FAILED lead,
+ * so it cannot reset or reopen any other decision. A race (another process
+ * already moved the lead) yields `applied: false`, which the caller must not
+ * retry blindly.
+ */
+export async function reevaluateNeedsReviewDecision(
+  id: string,
+  expectedVersion: number,
+  decision: LeadDecision,
+  now: Date = new Date(),
+): Promise<RecordDecisionResult> {
+  const { count } = await prisma.leadProcessing.updateMany({
+    where: { id, version: expectedVersion, status: ProcessingStatus.NEEDS_REVIEW },
+    data: {
+      status: decision.status,
+      version: { increment: 1 },
+      decisionReason: decision.reason.slice(0, 64),
+      decisionDetail:
+        decision.detail === undefined ? null : sanitizeDecisionDetail(decision.detail),
+      decidedAt: now,
+      leadUpdatedAt: decision.leadUpdatedAt ?? null,
+    },
+  });
+
+  const latest = await prisma.leadProcessing.findUniqueOrThrow({ where: { id } });
   return { applied: count === 1, record: latest };
 }
 

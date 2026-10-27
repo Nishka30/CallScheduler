@@ -219,7 +219,13 @@ export async function initiateCallForLead(
   }
 }
 
-function toListRow(leadId: string, detail: LeadDetail): LeadListRow {
+/**
+ * Builds a `LeadListRow`-shaped object from a lead detail response, so the
+ * eligibility/CRM-gate logic (written against the list shape) can be re-run
+ * against FRESH detail. Exported for reuse by the explicit NEEDS_REVIEW
+ * re-evaluation path (`leadReevaluation.service.ts`) - never duplicated.
+ */
+export function toListRow(leadId: string, detail: LeadDetail): LeadListRow {
   const cur = detail.current ?? detail.captured ?? {};
   return {
     id: leadId,

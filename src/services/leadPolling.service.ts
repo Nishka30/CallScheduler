@@ -235,7 +235,7 @@ async function processRow(row: LeadListRow, ctx: RowContext): Promise<string> {
 
   // Only a surviving candidate justifies the extra reads.
   if (decision.outcome === 'ELIGIBLE' && ctx.fetchContext) {
-    decision = await resolveWithContext(leadId, row, ctx);
+    decision = await resolveWithContext(leadId, row, ctx.client);
   }
 
   const result = await recordLeadDecision(
@@ -284,16 +284,21 @@ async function processRow(row: LeadListRow, ctx: RowContext): Promise<string> {
  * A transient failure leaves the lead PENDING (by returning no decision change
  * it would be wrong to record), so it is reconsidered on the next poll rather
  * than being wrongly marked eligible with missing context.
+ *
+ * Exported (and taking just the client rather than a full `RowContext`) so the
+ * EXACT same phone/person-key logic can be reused by the explicit NEEDS_REVIEW
+ * re-evaluation path (`leadReevaluation.service.ts`) without duplicating it -
+ * any future change here applies to both automatically.
  */
-async function resolveWithContext(
+export async function resolveWithContext(
   leadId: string,
   row: LeadListRow,
-  ctx: RowContext,
+  client: LeadApiClient,
 ): Promise<EligibilityDecision> {
   let detail: LeadDetail;
 
   try {
-    detail = await ctx.client.getLead(leadId);
+    detail = await client.getLead(leadId);
   } catch (error) {
     return contextFailureDecision(error, 'lead detail');
   }
@@ -317,7 +322,7 @@ async function resolveWithContext(
 
   let history: PersonHistory;
   try {
-    history = await ctx.client.getPerson(personKey);
+    history = await client.getPerson(personKey);
   } catch (error) {
     return contextFailureDecision(error, 'person history');
   }
@@ -349,7 +354,8 @@ function contextFailureDecision(error: unknown, what: string): EligibilityDecisi
   throw error;
 }
 
-function toProcessingStatus(
+/** Exported for reuse by `leadReevaluation.service.ts` - one mapping, no drift. */
+export function toProcessingStatus(
   outcome: EligibilityDecision['outcome'],
 ):
   | typeof ProcessingStatus.ELIGIBLE

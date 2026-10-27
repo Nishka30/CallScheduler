@@ -23,8 +23,12 @@ vi.mock('../src/lib/prisma.js', () => ({
   disconnectPrisma: vi.fn(),
 }));
 
-const { recordLeadDecision, sanitizeDecisionDetail, findDecidedLeadIds } =
-  await import('../src/repositories/leadProcessing.repository.js');
+const {
+  recordLeadDecision,
+  reevaluateNeedsReviewDecision,
+  sanitizeDecisionDetail,
+  findDecidedLeadIds,
+} = await import('../src/repositories/leadProcessing.repository.js');
 const { advanceCursor, isBootstrapPending, markBootstrapComplete } =
   await import('../src/repositories/integrationCursor.repository.js');
 
@@ -134,6 +138,70 @@ describe('recordLeadDecision', () => {
 
     const data = leadProcessing.updateMany.mock.calls[0]![0].data as Record<string, string>;
     expect(data['decisionReason']).toHaveLength(64);
+  });
+});
+
+describe('reevaluateNeedsReviewDecision', () => {
+  it('only targets a row currently NEEDS_REVIEW (never PENDING/ELIGIBLE/etc)', async () => {
+    leadProcessing.updateMany.mockResolvedValue({ count: 1 });
+    leadProcessing.findUniqueOrThrow.mockResolvedValue(
+      record({ status: ProcessingStatus.ELIGIBLE, version: 4 }),
+    );
+
+    await reevaluateNeedsReviewDecision('ff000000-0000-4000-8000-000000000001', 3, {
+      status: ProcessingStatus.ELIGIBLE,
+      reason: 'eligible',
+    });
+
+    const call = leadProcessing.updateMany.mock.calls[0]![0] as { where: Record<string, unknown> };
+    expect(call.where).toMatchObject({ status: ProcessingStatus.NEEDS_REVIEW, version: 3 });
+  });
+
+  it('promotes a NEEDS_REVIEW lead to ELIGIBLE once the phone verdict resolves', async () => {
+    leadProcessing.updateMany.mockResolvedValue({ count: 1 });
+    leadProcessing.findUniqueOrThrow.mockResolvedValue(
+      record({ status: ProcessingStatus.ELIGIBLE, version: 2 }),
+    );
+
+    const result = await reevaluateNeedsReviewDecision('ff000000-0000-4000-8000-000000000001', 1, {
+      status: ProcessingStatus.ELIGIBLE,
+      reason: 'eligible',
+    });
+
+    expect(result.applied).toBe(true);
+    expect(result.record.status).toBe(ProcessingStatus.ELIGIBLE);
+  });
+
+  it('resolves a NEEDS_REVIEW lead to SKIPPED when it has since been opted out', async () => {
+    leadProcessing.updateMany.mockResolvedValue({ count: 1 });
+    leadProcessing.findUniqueOrThrow.mockResolvedValue(
+      record({ status: ProcessingStatus.SKIPPED, decisionReason: 'status_blocked', version: 2 }),
+    );
+
+    const result = await reevaluateNeedsReviewDecision('ff000000-0000-4000-8000-000000000001', 1, {
+      status: ProcessingStatus.SKIPPED,
+      reason: 'status_blocked',
+      detail: 'status "Unsubscribe"',
+    });
+
+    expect(result.applied).toBe(true);
+    expect(result.record.status).toBe(ProcessingStatus.SKIPPED);
+  });
+
+  it('reports applied:false without retrying when the row moved under us (race)', async () => {
+    leadProcessing.updateMany.mockResolvedValue({ count: 0 });
+    leadProcessing.findUniqueOrThrow.mockResolvedValue(
+      record({ status: ProcessingStatus.PROCESSING, version: 5 }),
+    );
+
+    const result = await reevaluateNeedsReviewDecision('ff000000-0000-4000-8000-000000000001', 1, {
+      status: ProcessingStatus.ELIGIBLE,
+      reason: 'eligible',
+    });
+
+    expect(result.applied).toBe(false);
+    // The CAS is a single attempt: no second updateMany call.
+    expect(leadProcessing.updateMany).toHaveBeenCalledTimes(1);
   });
 });
 

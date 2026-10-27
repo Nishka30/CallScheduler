@@ -255,6 +255,46 @@ const envSchema = z.object({
    * this flag only reduces redundant polling. Default OFF (single-process).
    */
   LEAD_WORKER_USE_DB_LOCK: booleanFlag('false'),
+
+  // -------------------------------------------------------------------------
+  // Automatic NEEDS_REVIEW re-evaluation (bounded + throttled).
+  // -------------------------------------------------------------------------
+
+  /**
+   * When true, after each poll cycle the worker also re-evaluates a BOUNDED,
+   * THROTTLED batch of leads stuck in NEEDS_REVIEW for a data-availability
+   * reason (e.g. the phone verdict had not been populated yet). It reuses the
+   * exact same eligibility logic and the version-guarded CAS, never promotes a
+   * blocked-status (e.g. Unsubscribe) lead, and still gates dialling on
+   * RETELL_CALLING_ENABLED. Default OFF: no lead is ever automatically
+   * re-evaluated unless this is explicitly enabled.
+   */
+  LEAD_REEVAL_ENABLED: booleanFlag('false'),
+
+  /**
+   * Base delay before a NEEDS_REVIEW lead is retried, measured from when it was
+   * decided. Chosen to comfortably clear the Lead API's async phone-validation
+   * lag (observed ~7-10 min), so the default is 10 minutes. Each further attempt
+   * waits this × backoff^attempt.
+   */
+  LEAD_REEVAL_RETRY_INTERVAL_MS: z.coerce
+    .number()
+    .int()
+    .min(60_000)
+    .max(86_400_000)
+    .default(600_000),
+
+  /** Multiplier applied to the retry interval after each unsuccessful attempt. */
+  LEAD_REEVAL_BACKOFF_FACTOR: z.coerce.number().int().min(1).max(10).default(2),
+
+  /** Hard cap on retries per lead; after this it is left NEEDS_REVIEW (exhausted). */
+  LEAD_REEVAL_MAX_ATTEMPTS: z.coerce.number().int().min(1).max(20).default(5),
+
+  /** Max Lead API re-evaluations performed in a single sweep (bounds API load). */
+  LEAD_REEVAL_MAX_PER_CYCLE: z.coerce.number().int().min(1).max(100).default(10),
+
+  /** Max NEEDS_REVIEW rows read from the local DB per sweep to consider. */
+  LEAD_REEVAL_BATCH_SIZE: z.coerce.number().int().min(1).max(500).default(50),
 });
 
 export type Env = z.infer<typeof envSchema>;

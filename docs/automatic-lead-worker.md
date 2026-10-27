@@ -43,17 +43,52 @@ at `GET /health/worker`.
 
 ## Feature flags (responsibilities)
 
-| Flag                            | Controls                                                               |
-| ------------------------------- | ---------------------------------------------------------------------- |
-| `LEAD_WORKER_ENABLED`           | Whether the background poll loop runs at all. Default `false`.         |
-| `LEAD_ELIGIBILITY_AUTO_ENABLED` | Whether a passing lead becomes `ELIGIBLE` (vs held in `NEEDS_REVIEW`). |
-| `RETELL_CALLING_ENABLED`        | Whether the orchestrator actually DIALS. Enforced in the client too.   |
+| Flag                            | Controls                                                                            |
+| ------------------------------- | ----------------------------------------------------------------------------------- |
+| `LEAD_WORKER_ENABLED`           | Whether the background poll loop runs at all. Default `false`.                      |
+| `LEAD_ELIGIBILITY_AUTO_ENABLED` | Whether a passing lead becomes `ELIGIBLE` (vs held in `NEEDS_REVIEW`).              |
+| `RETELL_CALLING_ENABLED`        | Whether the orchestrator actually DIALS. Enforced in the client too.                |
+| `LEAD_REEVAL_ENABLED`           | Whether stuck `NEEDS_REVIEW` leads are automatically re-evaluated. Default `false`. |
 
 Safe combinations:
 
 - Worker on, calling off → leads are ingested and classified; **nothing is dialled**.
 - Worker on, auto-eligibility off → nothing even reaches `ELIGIBLE`, so no call is attempted.
 - Worker on, both on → eligible leads are dialled automatically.
+
+## Automatic `NEEDS_REVIEW` re-evaluation (bounded + throttled)
+
+A lead can land in `NEEDS_REVIEW` for a transient DATA-availability reason — most
+commonly `phone_verdict_unreadable`, because the Lead API populates its phone
+verdict asynchronously (~7–10 min after the lead is created). The normal poll
+path never revisits such a lead (by design — `recordLeadDecision` only moves a
+lead out of `PENDING`). When `LEAD_REEVAL_ENABLED=true`, the worker runs a
+**bounded, throttled sweep after each poll cycle** that retries those leads.
+
+How it stays safe and cheap:
+
+- **Reuses the exact logic.** Each retry calls `reevaluateNeedsReviewLead()`,
+  which re-runs the same eligibility checks (incl. `LEAD_BLOCKED_STATUSES` — an
+  `Unsubscribe` lead resolves to `SKIPPED`, **never promoted or called**), the
+  phone verdict, and `RETELL_CALLING_ENABLED`, and applies the result through the
+  **version-guarded CAS** that can only move a lead OUT of `NEEDS_REVIEW`.
+- **Throttled per lead.** First retry no sooner than `LEAD_REEVAL_RETRY_INTERVAL_MS`
+  after the lead's decision; each further retry waits `× LEAD_REEVAL_BACKOFF_FACTOR`.
+- **Bounded.** At most `LEAD_REEVAL_MAX_ATTEMPTS` per lead (then left
+  `NEEDS_REVIEW`, "exhausted"), at most `LEAD_REEVAL_MAX_PER_CYCLE` Lead API
+  re-evaluations per sweep, reading at most `LEAD_REEVAL_BATCH_SIZE` candidate
+  rows locally per sweep.
+- **In-memory retry state** (per process; no schema change). A restart resets the
+  counters for a fresh bounded budget; the CAS guarantees no unsafe/duplicate
+  decision regardless, and across replicas each throttles independently while the
+  CAS keeps one decision winning.
+- **Observability:** each sweep logs a structured summary
+  (`considered, notDue, exhausted, attempted, promoted, resolvedSkipped,
+stillUnchanged, newlyExhausted, races, errors`); exhaustion logs a per-lead
+  warning. A sweep failure is contained — it never fails the poll cycle.
+
+The manual `npm run reevaluate:lead -- <id>` remains for one-off, on-demand
+re-evaluation independent of this sweep.
 
 ## Reliability & idempotency (where the guarantees live)
 

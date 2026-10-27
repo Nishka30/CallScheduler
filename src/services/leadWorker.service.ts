@@ -3,6 +3,7 @@ import { logger } from '../lib/logger.js';
 import { prisma } from '../lib/prisma.js';
 import { sanitizeErrorMessage } from '../repositories/leadProcessing.repository.js';
 import { runLeadPoll, type PollSummary } from './leadPolling.service.js';
+import { buildReevaluationSweeper } from './leadReevaluationSweep.service.js';
 
 /**
  * Background worker that runs the EXISTING `runLeadPoll()` on a timer, so leads
@@ -57,6 +58,12 @@ export interface LeadWorkerOptions {
   maxBackoffMs: number;
   /** The poll step; defaults to the real `runLeadPoll`. Injected in tests. */
   runPoll?: () => Promise<PollSummary>;
+  /**
+   * Optional NEEDS_REVIEW re-evaluation sweep, run AFTER a successful poll in
+   * the same (non-overlapping) cycle. Its own errors are contained so a sweep
+   * failure never marks the poll cycle failed. Absent = no automatic re-eval.
+   */
+  runSweep?: () => Promise<void>;
   /** Optional cross-process guard; default runs the cycle directly. */
   withLock?: PollLock;
   now?: () => number;
@@ -69,6 +76,7 @@ export class LeadWorker {
   private readonly intervalMs: number;
   private readonly maxBackoffMs: number;
   private readonly runPoll: () => Promise<PollSummary>;
+  private readonly runSweep: (() => Promise<void>) | undefined;
   private readonly withLock: PollLock;
   private readonly now: () => number;
   private readonly setTimer: (fn: () => void, ms: number) => ReturnType<typeof setTimeout>;
@@ -83,6 +91,7 @@ export class LeadWorker {
     this.intervalMs = options.intervalMs;
     this.maxBackoffMs = options.maxBackoffMs;
     this.runPoll = options.runPoll ?? (() => runLeadPoll());
+    this.runSweep = options.runSweep;
     this.withLock = options.withLock ?? ((fn) => fn());
     this.now = options.now ?? (() => Date.now());
     this.setTimer = options.setTimer ?? ((fn, ms) => setTimeout(fn, ms));
@@ -175,6 +184,20 @@ export class LeadWorker {
           },
           'lead worker: poll cycle complete',
         );
+
+        // Re-evaluation sweep runs only after a real poll (lock held), in the
+        // same non-overlapping cycle. Its errors are contained here so a sweep
+        // failure can never mark the poll cycle failed or trigger poll backoff.
+        if (this.runSweep) {
+          try {
+            await this.runSweep();
+          } catch (error) {
+            logger.error(
+              { err: sanitizeErrorMessage(error) },
+              'lead worker: re-evaluation sweep failed (poll cycle unaffected)',
+            );
+          }
+        }
       } else {
         // Lock not acquired — another replica is polling. Not an error.
         logger.debug('lead worker: poll skipped (another worker holds the poll lock)');
@@ -233,9 +256,29 @@ export function startLeadWorker(config: Env = env): LeadWorker | null {
   }
   if (active) return active;
 
+  // Optional bounded/throttled NEEDS_REVIEW re-evaluation, after each poll.
+  const sweeper = buildReevaluationSweeper(config);
+  if (sweeper) {
+    logger.info(
+      {
+        retryIntervalMs: config.LEAD_REEVAL_RETRY_INTERVAL_MS,
+        maxAttempts: config.LEAD_REEVAL_MAX_ATTEMPTS,
+        maxPerCycle: config.LEAD_REEVAL_MAX_PER_CYCLE,
+      },
+      'lead worker: automatic NEEDS_REVIEW re-evaluation enabled',
+    );
+  }
+
   const worker = new LeadWorker({
     intervalMs: config.LEAD_WORKER_INTERVAL_MS,
     maxBackoffMs: config.LEAD_WORKER_MAX_BACKOFF_MS,
+    ...(sweeper
+      ? {
+          runSweep: async () => {
+            await sweeper.runSweep();
+          },
+        }
+      : {}),
     ...(config.LEAD_WORKER_USE_DB_LOCK
       ? { withLock: advisoryLock(config.LEAD_WORKER_MAX_BACKOFF_MS) }
       : {}),

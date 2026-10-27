@@ -209,6 +209,22 @@ describe('contact eligibility', () => {
 
     expect(evaluate(row).reason).toBe('lead_deleted');
   });
+
+  it('blocks an Unsubscribed lead via the status check alone, even with a fully validated phone', () => {
+    // Regression for lead 5528514a-3442-4741-aff3-2d54ba1ac668: the CRM later
+    // tagged this lead `lead_status: "Unsubscribe"`, and its phone verdict was
+    // (separately, and later) confirmed valid. evaluateListEligibility must stop
+    // at the status check and never need, or be influenced by, the phone step -
+    // the opt-out block is architecturally independent of phone validity, since
+    // the phone step (resolveWithContext) is only ever reached when list
+    // eligibility is ELIGIBLE in the first place.
+    const decision = evaluate(freshRow({ lead_status: 'Unsubscribe' }));
+    expect(decision).toEqual({
+      outcome: 'SKIPPED',
+      reason: 'status_blocked',
+      detail: 'status "Unsubscribe"',
+    });
+  });
 });
 
 describe('caller holds', () => {
@@ -315,6 +331,41 @@ describe('phone verdict', () => {
     expect(readPhoneVerdict(undefined).status).toBe('unreadable');
     expect(readPhoneVerdict(null).status).toBe('unreadable');
     expect(readPhoneVerdict('+447700900123').status).toBe('unreadable');
+  });
+
+  it('reproduces the exact stored detail message for an absent phone object', () => {
+    // This is the literal message recorded for lead
+    // 5528514a-3442-4741-aff3-2d54ba1ac668 as `phone_verdict_unreadable`. The
+    // Lead API's phone-verification object had not been created yet at the
+    // moment of that evaluation (confirmed: it existed and was fully valid by
+    // the time this was investigated, ~9 minutes after the lead's created_at,
+    // matching the known ~7-10 minute async validation delay).
+    const decision = evaluatePhoneEligibility({ phone: null });
+    expect(decision).toEqual({
+      outcome: 'NEEDS_REVIEW',
+      reason: 'phone_verdict_unreadable',
+      detail: 'phone verdict was absent or not an object',
+    });
+  });
+
+  it('accepts the exact confirmed shape from lead 5528514a (India, WhatsApp-derived mobile)', () => {
+    const laterConfirmedShape = {
+      phone_raw: '+916291764011',
+      phone_e164: '+916291764011',
+      phone_best: '+916291764011',
+      valid: true,
+      tier: 'live_mobile',
+      line_type: 'mobile',
+      country_iso: 'IN',
+      lookup_status: 'ok',
+    };
+    expect(readPhoneVerdict(laterConfirmedShape)).toEqual({
+      status: 'valid',
+      e164: '+916291764011',
+      tier: 'live_mobile',
+      lineType: 'mobile',
+    });
+    expect(evaluatePhoneEligibility({ phone: laterConfirmedShape }).outcome).toBe('ELIGIBLE');
   });
 
   it('routes an unreadable verdict to review, never to a call', () => {

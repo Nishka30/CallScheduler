@@ -177,6 +177,77 @@ describe('LeadWorker — lifecycle', () => {
   });
 });
 
+describe('LeadWorker — re-evaluation sweep hook', () => {
+  it('runs the sweep after a successful poll', async () => {
+    const sched = controllableScheduler();
+    const order: string[] = [];
+    const runPoll = vi.fn(() => {
+      order.push('poll');
+      return Promise.resolve(summary());
+    });
+    const runSweep = vi.fn(() => {
+      order.push('sweep');
+      return Promise.resolve();
+    });
+    const w = new LeadWorker({
+      intervalMs: 1000,
+      maxBackoffMs: 60000,
+      runPoll,
+      runSweep,
+      ...sched,
+    });
+
+    w.start();
+    await sched.tick();
+
+    expect(order).toEqual(['poll', 'sweep']);
+    await w.stop();
+  });
+
+  it('does NOT run the sweep when the poll was skipped (lock not acquired)', async () => {
+    const sched = controllableScheduler();
+    const runPoll = vi.fn(() => Promise.resolve(summary()));
+    const runSweep = vi.fn(() => Promise.resolve());
+    const w = new LeadWorker({
+      intervalMs: 1000,
+      maxBackoffMs: 60000,
+      runPoll,
+      runSweep,
+      withLock: () => Promise.resolve(undefined), // lock gated the whole cycle
+      ...sched,
+    });
+
+    w.start();
+    await sched.tick();
+
+    expect(runPoll).not.toHaveBeenCalled();
+    expect(runSweep).not.toHaveBeenCalled();
+    await w.stop();
+  });
+
+  it('a failing sweep never fails the poll cycle or triggers backoff', async () => {
+    const sched = controllableScheduler();
+    const runPoll = vi.fn(() => Promise.resolve(summary()));
+    const runSweep = vi.fn(() => Promise.reject(new Error('sweep boom')));
+    const w = new LeadWorker({
+      intervalMs: 1000,
+      maxBackoffMs: 60000,
+      runPoll,
+      runSweep,
+      ...sched,
+    });
+
+    w.start();
+    await sched.tick();
+
+    const s = w.getStatus();
+    expect(s.lastPollOk).toBe(true); // poll stays green despite sweep failure
+    expect(s.consecutiveErrors).toBe(0);
+    expect(s.cyclesCompleted).toBe(1);
+    await w.stop();
+  });
+});
+
 describe('startLeadWorker / getLeadWorkerStatus', () => {
   it('does not start when LEAD_WORKER_ENABLED is false', () => {
     const w = startLeadWorker({

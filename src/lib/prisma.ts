@@ -2,6 +2,17 @@ import { PrismaClient } from '@prisma/client';
 import { env, isProduction } from '../config/env.js';
 import { logger } from './logger.js';
 
+/**
+ * True for the query-engine's standard "Unique constraint failed" message -
+ * the signature of a P2002 the application already handles as a successful,
+ * idempotent duplicate-insert resolution. Exported for a direct unit test;
+ * matched on the stable wording Prisma itself uses, not on a table/column name,
+ * so it stays correct across every unique constraint in the schema.
+ */
+export function isExpectedUniqueConstraintEvent(message: string): boolean {
+  return message.includes('Unique constraint failed');
+}
+
 function createPrismaClient() {
   const client = new PrismaClient({
     // `warn`/`error` only, emitted as events so they go through our redacting
@@ -18,6 +29,18 @@ function createPrismaClient() {
   });
 
   client.$on('error', (event) => {
+    // The query engine emits this event for EVERY query error, including a
+    // unique-constraint violation (P2002) that a repository function already
+    // caught and resolved cleanly (e.g. `ensureProcessingRecord`,
+    // `recordCallAttempt` racing a concurrent insert for the same lead - an
+    // EXPECTED outcome of the idempotent-insert pattern used throughout this
+    // codebase, not a failure). Logging those at `error` level would be noisy
+    // and could mislead on-call review into treating a benign race as a defect.
+    // Everything else still logs at `error`, unchanged.
+    if (isExpectedUniqueConstraintEvent(event.message)) {
+      logger.debug({ prisma: event.message }, 'prisma: handled unique-constraint race (expected)');
+      return;
+    }
     logger.error({ prisma: event.message }, 'prisma error');
   });
 
