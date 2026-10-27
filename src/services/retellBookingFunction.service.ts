@@ -9,6 +9,7 @@ import {
   retellFunctionRequestSchema,
 } from '../integrations/retell/functionSchemas.js';
 import { CalendarClient } from '../integrations/leadApi/calendar.client.js';
+import { LeadApiError } from '../integrations/leadApi/errors.js';
 import { offerTeamSlots, type SlotOffer } from './teamScheduling.service.js';
 import {
   bookAppointment,
@@ -67,6 +68,48 @@ export interface BookingFunctionDeps {
 
 /** How many slots to offer the agent at once. */
 const SLOT_LIMIT = 3;
+
+/**
+ * The slots lookup is INTERACTIVE — the customer is on the line. A slow or broken
+ * team-slots upstream must fail fast into a spoken fallback, not run the full
+ * retry budget (~40s observed in production: up to 4 attempts × the 10s default
+ * timeout). So the booking tool reads availability with a short timeout and NO
+ * retries. A schema-contract failure is already permanent (never retried); this
+ * additionally bounds a slow/5xx upstream. The booking WRITE keeps the normal
+ * single-shot behaviour.
+ */
+const INTERACTIVE_SLOTS_TIMEOUT_MS = 8_000;
+
+function interactiveCalendarClient(): CalendarClient {
+  return new CalendarClient({ timeoutMs: INTERACTIVE_SLOTS_TIMEOUT_MS, maxRetries: 0 });
+}
+
+/**
+ * Reads fresh availability for the interactive tool, degrading any upstream
+ * failure (schema contract mismatch, timeout, 5xx, network) into a thrown
+ * `LeadApiError` the caller converts to a spoken fallback. Values are never
+ * logged — only the sanitized issue paths carried on the error.
+ */
+function logSlotsLookupFailure(leadId: string, fn: string, error: unknown): void {
+  if (error instanceof LeadApiError) {
+    logger.error(
+      {
+        leadId,
+        fn,
+        kind: error.kind,
+        ...(error.status === undefined ? {} : { status: error.status }),
+        path: error.path,
+        ...(error.issues === undefined ? {} : { issues: error.issues }),
+      },
+      'booking function: team-slots lookup failed; returning a graceful fallback',
+    );
+    return;
+  }
+  logger.error(
+    { leadId, fn, err: error instanceof Error ? error.name : 'unknown' },
+    'booking function: unexpected slots-lookup error; returning a graceful fallback',
+  );
+}
 
 export async function processBookingFunction(
   input: ProcessBookingFunctionInput,
@@ -153,9 +196,27 @@ async function handleGetSlots(
     };
   }
 
-  const offer = deps.offerSlots
-    ? await deps.offerSlots(leadId, args.data.timezone)
-    : await offerTeamSlots(leadId, args.data.timezone, new CalendarClient(), { limit: SLOT_LIMIT });
+  let offer: SlotOffer;
+  try {
+    offer = deps.offerSlots
+      ? await deps.offerSlots(leadId, args.data.timezone)
+      : await offerTeamSlots(leadId, args.data.timezone, interactiveCalendarClient(), {
+          limit: SLOT_LIMIT,
+        });
+  } catch (error) {
+    // Any upstream failure (schema mismatch, timeout, 5xx) becomes a spoken
+    // fallback — never an unhandled 500, and never fabricated slots.
+    logSlotsLookupFailure(leadId, GET_SLOTS_FUNCTION, error);
+    return {
+      status: 'ok',
+      operation: 'get_slots',
+      payload: {
+        available: false,
+        reason:
+          'I could not look up available times just now. Take the customer’s details and let them know a consultant will follow up.',
+      },
+    };
+  }
 
   if (offer.mode === 'none' || offer.slots.length === 0) {
     return {
@@ -215,9 +276,19 @@ async function handleBook(
 
   // Re-read FRESH availability: it carries the routing mode and lets us confirm
   // the chosen slot is still open (never trust a stale client-side slot list).
-  const offer = deps.offerSlots
-    ? await deps.offerSlots(leadId, args.timezone)
-    : await offerTeamSlots(leadId, args.timezone, new CalendarClient(), { limit: 20 });
+  // If this read fails we must NOT book (we cannot verify the slot) — degrade to
+  // a spoken follow-up instead of a 500.
+  let offer: SlotOffer;
+  try {
+    offer = deps.offerSlots
+      ? await deps.offerSlots(leadId, args.timezone)
+      : await offerTeamSlots(leadId, args.timezone, interactiveCalendarClient(), { limit: 20 });
+  } catch (error) {
+    logSlotsLookupFailure(leadId, BOOK_FUNCTION, error);
+    return bookError(
+      'I could not check availability just now. Take the customer’s details and let them know a consultant will follow up.',
+    );
+  }
 
   const note = buildBookingNote({
     confirmedDestination: args.confirmed_destination,

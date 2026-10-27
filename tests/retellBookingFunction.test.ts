@@ -6,6 +6,7 @@ import {
 } from '../src/services/retellBookingFunction.service.js';
 import type { SlotOffer } from '../src/services/teamScheduling.service.js';
 import type { BookingRequest, BookingResult } from '../src/services/appointmentBooking.service.js';
+import { LeadApiError } from '../src/integrations/leadApi/errors.js';
 
 vi.mock('../src/lib/prisma.js', () => ({
   prisma: { $queryRaw: vi.fn() },
@@ -172,6 +173,62 @@ describe('processBookingFunction — get_available_slots', () => {
     if (res.status !== 'ok') return;
     expect(res.payload.available).toBe(false);
     expect(String(res.payload.error)).toMatch(/timezone/i);
+  });
+
+  it('degrades gracefully (no 500) when the team-slots response fails the schema', async () => {
+    const raw = body('get_available_slots', { timezone: 'Asia/Kolkata' });
+    const contractError = new LeadApiError(
+      'contract',
+      'team-slots response did not match the documented shape',
+      { path: '/api/crm/leads/lead-real/team-slots', issues: ['slots.0.starts_at: invalid_type'] },
+    );
+    const res = await processBookingFunction(
+      input(raw),
+      deps({ offerSlots: () => Promise.reject(contractError) }),
+    );
+    expect(res.status).toBe('ok'); // HTTP 200, not a thrown 500
+    if (res.status !== 'ok') return;
+    expect(res.payload.available).toBe(false);
+    // The agent gets a friendly fallback — never the raw contract/internal detail.
+    const serialized = JSON.stringify(res.payload);
+    expect(serialized).not.toContain('documented shape');
+    expect(serialized).not.toContain('invalid_type');
+    expect(res.payload.slots).toBeUndefined(); // never fabricate slots
+  });
+
+  it('degrades gracefully when the agent supplies a non-IANA timezone (upstream 400)', async () => {
+    // Reproduced live: "GMT+5:30" / "India Standard Time" → the Lead API 400s.
+    const raw = body('get_available_slots', { timezone: 'GMT+5:30' });
+    const badTz = new LeadApiError(
+      'client',
+      'calendar GET /api/crm/leads/lead-real/team-slots returned 400: invalid timezone',
+      { status: 400, path: '/api/crm/leads/lead-real/team-slots' },
+    );
+    const res = await processBookingFunction(
+      input(raw),
+      deps({ offerSlots: () => Promise.reject(badTz) }),
+    );
+    expect(res.status).toBe('ok');
+    if (res.status !== 'ok') return;
+    expect(res.payload.available).toBe(false);
+    // Never leak the upstream status/path/detail to the model.
+    const serialized = JSON.stringify(res.payload);
+    expect(serialized).not.toContain('400');
+    expect(serialized).not.toContain('/api/crm');
+  });
+
+  it('degrades gracefully when the team-slots read times out', async () => {
+    const raw = body('get_available_slots', { timezone: 'Asia/Kolkata' });
+    const timeout = new LeadApiError('network', 'calendar request timed out after 8000ms', {
+      path: '/api/crm/leads/lead-real/team-slots',
+    });
+    const res = await processBookingFunction(
+      input(raw),
+      deps({ offerSlots: () => Promise.reject(timeout) }),
+    );
+    expect(res.status).toBe('ok');
+    if (res.status !== 'ok') return;
+    expect(res.payload.available).toBe(false);
   });
 });
 
@@ -350,5 +407,28 @@ describe('processBookingFunction — book_consultation', () => {
     if (res.status !== 'ok') return;
     expect(res.payload.booked).toBe(false);
     expect(String(res.payload.reason).toLowerCase()).toContain('follow');
+  });
+
+  it('degrades gracefully (no 500, no booking) when the fresh-availability read fails', async () => {
+    const raw = body('book_consultation', okArgs);
+    const spy = bookMock();
+    const res = await processBookingFunction(
+      input(raw),
+      deps({
+        offerSlots: () =>
+          Promise.reject(
+            new LeadApiError('contract', 'team-slots response did not match the documented shape', {
+              path: '/api/crm/leads/lead-real/team-slots',
+            }),
+          ),
+        book: spy,
+      }),
+    );
+    expect(res.status).toBe('ok'); // HTTP 200, not a thrown 500
+    if (res.status !== 'ok') return;
+    expect(res.payload.booked).toBe(false);
+    expect(spy).not.toHaveBeenCalled(); // never book without verified fresh availability
+    const serialized = JSON.stringify(res.payload);
+    expect(serialized).not.toContain('documented shape');
   });
 });

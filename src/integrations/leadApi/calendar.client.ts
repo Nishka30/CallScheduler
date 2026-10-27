@@ -35,6 +35,18 @@ export interface PostNoteInput {
 export interface CalendarClientOptions {
   fetchImpl?: typeof fetch;
   sleep?: (ms: number) => Promise<void>;
+  /**
+   * Override the per-request timeout (ms). The interactive booking tool uses a
+   * short bound so a slow upstream fails fast into a graceful fallback instead of
+   * leaving the caller on a silent line. Defaults to `LEAD_API_TIMEOUT_MS`.
+   */
+  timeoutMs?: number;
+  /**
+   * Override the GET retry budget. The interactive booking tool uses `0` so a
+   * slow/5xx upstream is not retried into a ~40s wait. Defaults to
+   * `LEAD_API_MAX_RETRIES`.
+   */
+  maxRetries?: number;
 }
 
 const defaultSleep = (ms: number): Promise<void> =>
@@ -70,8 +82,8 @@ export class CalendarClient {
     this.apiKey = requireLeadApiKey(config);
     this.agentEmail = config.CRM_AGENT_EMAIL;
     this.agentName = config.CRM_AGENT_NAME;
-    this.timeoutMs = config.LEAD_API_TIMEOUT_MS;
-    this.maxRetries = config.LEAD_API_MAX_RETRIES;
+    this.timeoutMs = options.timeoutMs ?? config.LEAD_API_TIMEOUT_MS;
+    this.maxRetries = options.maxRetries ?? config.LEAD_API_MAX_RETRIES;
     this.fetchImpl = options.fetchImpl ?? globalThis.fetch.bind(globalThis);
     this.sleep = options.sleep ?? defaultSleep;
   }

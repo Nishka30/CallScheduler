@@ -35,11 +35,23 @@ export class LeadApiError extends Error {
   /** Path only - never the full URL with query values. */
   readonly path: string;
   readonly retryAfterMs?: number;
+  /**
+   * For a `contract` failure: the Zod issue locations (`"<path>: <code>"`) that
+   * failed, so the exact drifted field is observable. Paths + codes only — never
+   * field VALUES, which can carry lead personal data.
+   */
+  readonly issues?: readonly string[];
 
   constructor(
     kind: LeadApiFailureKind,
     message: string,
-    options: { status?: number; path: string; retryAfterMs?: number; cause?: unknown },
+    options: {
+      status?: number;
+      path: string;
+      retryAfterMs?: number;
+      cause?: unknown;
+      issues?: readonly string[];
+    },
   ) {
     super(message, options.cause === undefined ? undefined : { cause: options.cause });
     this.name = 'LeadApiError';
@@ -47,6 +59,7 @@ export class LeadApiError extends Error {
     this.path = options.path;
     if (options.status !== undefined) this.status = options.status;
     if (options.retryAfterMs !== undefined) this.retryAfterMs = options.retryAfterMs;
+    if (options.issues !== undefined) this.issues = options.issues;
   }
 
   get retryable(): boolean {

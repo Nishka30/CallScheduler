@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { z, type ZodError } from 'zod';
 import { LeadApiError } from './errors.js';
 
 /**
@@ -94,22 +94,35 @@ export const appointmentPatchResponseSchema = z
 
 export function parseTeamSlots(payload: unknown, path: string): TeamSlotsResponse {
   const r = teamSlotsResponseSchema.safeParse(payload);
-  if (!r.success) throw contractError('team-slots', path);
+  if (!r.success) throw contractError('team-slots', path, r.error);
   return r.data;
 }
 export function parseTeamAppointment(payload: unknown, path: string): TeamAppointmentResponse {
   const r = teamAppointmentResponseSchema.safeParse(payload);
-  if (!r.success) throw contractError('team appointment', path);
+  if (!r.success) throw contractError('team appointment', path, r.error);
   return r.data;
 }
 export function parseAppointmentPatch(payload: unknown, path: string) {
   const r = appointmentPatchResponseSchema.safeParse(payload);
-  if (!r.success) throw contractError('appointment patch', path);
+  if (!r.success) throw contractError('appointment patch', path, r.error);
   return r.data;
 }
 
-function contractError(what: string, path: string): LeadApiError {
+/**
+ * Summarises a Zod failure as a short list of `"<path>: <code>"` strings so the
+ * drifted field is observable in logs. Deliberately emits field PATHS and issue
+ * CODES only — never the offending VALUES, which can carry lead personal data
+ * (agent emails, times). Bounded so a wildly-wrong payload cannot flood a log.
+ */
+export function summarizeZodIssues(error: ZodError, limit = 8): string[] {
+  return error.issues
+    .slice(0, limit)
+    .map((issue) => `${issue.path.join('.') || '(root)'}: ${issue.code}`);
+}
+
+function contractError(what: string, path: string, zodError?: ZodError): LeadApiError {
   return new LeadApiError('contract', `${what} response did not match the documented shape`, {
     path,
+    ...(zodError === undefined ? {} : { issues: summarizeZodIssues(zodError) }),
   });
 }

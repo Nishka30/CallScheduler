@@ -101,6 +101,128 @@ describe('getTeamSlots', () => {
     await client(impl).getTeamSlots('lead-1', 'UTC');
     expect(calls).toHaveLength(2);
   });
+
+  it('accepts the full documented 2026-10-20 shape (regression guard)', async () => {
+    const full = {
+      lead_id: 42, // number id is coerced to string
+      brand: 'himalayanwonders.com',
+      decision: { mode: 'owner', fallback: true, reason: 'owner', owner: { name: 'Sue' } },
+      owner: { email: 'sue@hw.com', name: 'Sue', first_name: 'Sue' },
+      agents: [{ email: 'a@hw.com', name: 'Ana', extra: 'kept' }],
+      from: '2026-11-03',
+      to: '2026-11-07',
+      slots: [
+        { starts_at: '2026-11-03T14:15:00Z', ends_at: null, agents: ['a@hw.com'], local: null },
+      ],
+    };
+    const res = await client(stubFetch(jsonResponse(full)).impl).getTeamSlots('lead-1', 'UTC');
+    expect(res.lead_id).toBe('42');
+    expect(res.decision.mode).toBe('owner');
+    expect(res.slots[0]!.starts_at).toBe('2026-11-03T14:15:00Z');
+  });
+
+  it('a mismatched 200 yields a contract error naming the failing field path (no values)', async () => {
+    // A slot missing `starts_at`, plus a secret-looking value in a sibling field.
+    const bad = {
+      decision: { mode: 'pool' },
+      slots: [{ ends_at: '2026-11-03T14:30:00Z', secret_field: 'sk-should-never-be-logged' }],
+    };
+    const e = await rejection(
+      client(stubFetch(jsonResponse(bad)).impl).getTeamSlots('lead-1', 'UTC'),
+    );
+    expect(e.kind).toBe('contract');
+    expect(e.issues).toBeDefined();
+    const joined = (e.issues ?? []).join(' | ');
+    expect(joined).toContain('slots.0.starts_at');
+    // Paths + codes only — never field values.
+    expect(joined).not.toContain('sk-should-never-be-logged');
+    expect(joined).not.toContain('2026-11-03T14:30:00Z');
+  });
+
+  it('reports a missing `decision` block as a contract error path', async () => {
+    const e = await rejection(
+      client(stubFetch(jsonResponse({ slots: [] })).impl).getTeamSlots('lead-1', 'UTC'),
+    );
+    expect(e.kind).toBe('contract');
+    expect((e.issues ?? []).join(' | ')).toContain('decision');
+  });
+
+  // Pinned to the ACTUAL live team-slots body captured read-only on 2026-10-27.
+  // All three live brands (himalayanwonders/patagoniahero/trekkinghero) return
+  // this exact structure (pool mode, owner null, per-slot `agents` as a string
+  // array, agent objects carrying extra `calendar_slug`/`time_zone` keys, plus
+  // top-level `from`/`to`). Values here are sanitized; the SHAPE is the real one.
+  it('accepts the real live team-slots contract (captured 2026-10-27, all brands)', async () => {
+    const live = {
+      lead_id: '33fd4b6e-0000-0000-0000-000000000000',
+      brand: 'himalayanwonders.com',
+      decision: { mode: 'pool', owner: null, fallback: false, reason: 'no owner; pooled' },
+      owner: null,
+      agents: [
+        {
+          email: 'agent@example.com',
+          name: 'Agent Example',
+          first_name: 'Agent',
+          calendar_slug: 'agent-example',
+          time_zone: 'Europe/London',
+        },
+      ],
+      from: '2026-10-27T18:00:00.000Z',
+      to: '2026-11-03T18:00:00.000Z',
+      slots: [
+        {
+          starts_at: '2026-10-28T03:30:00.000Z',
+          ends_at: '2026-10-28T04:00:00.000Z',
+          agents: ['agent@example.com'],
+          local: 'Wed 28 Oct, 9:00 AM',
+        },
+      ],
+    };
+    const res = await client(stubFetch(jsonResponse(live)).impl).getTeamSlots(
+      'lead-1',
+      'Asia/Kolkata',
+    );
+    expect(res.decision.mode).toBe('pool');
+    expect(res.decision.fallback).toBe(false);
+    expect(res.owner).toBeNull();
+    expect(res.slots).toHaveLength(1);
+    expect(res.slots[0]!.starts_at).toBe('2026-10-28T03:30:00.000Z');
+    expect(res.slots[0]!.agents).toEqual(['agent@example.com']);
+  });
+
+  // The one live, reproducible failure: a non-IANA timezone the agent's LLM may
+  // emit (e.g. "GMT+5:30", "India Standard Time") → the API returns HTTP 400
+  // `{error}`, NOT a 200 contract mismatch. It must surface as a `client` error
+  // (permanent, not retried), which the booking handler degrades gracefully.
+  it('maps an invalid-timezone 400 to a client error (not a contract error), no retry', async () => {
+    const { impl, calls } = stubFetch(jsonResponse({ error: 'invalid timezone' }, { status: 400 }));
+    const e = await rejection(client(impl).getTeamSlots('lead-1', 'GMT+5:30'));
+    expect(e.kind).toBe('client');
+    expect(e.status).toBe(400);
+    expect(calls).toHaveLength(1); // 4xx is permanent — never retried
+  });
+
+  it('fast-fails an interactive read: a per-call maxRetries:0 does NOT retry a 5xx', async () => {
+    const { impl, calls } = stubFetch(jsonResponse({ error: 'slow' }, { status: 500 }));
+    const fast = new CalendarClient(
+      { fetchImpl: impl, sleep: () => Promise.resolve(), maxRetries: 0 },
+      config(),
+    );
+    await rejection(fast.getTeamSlots('lead-1', 'UTC'));
+    expect(calls).toHaveLength(1); // one attempt, no retry storm
+  });
+
+  it('honours a per-call timeoutMs override on the request', async () => {
+    let seenSignal: AbortSignal | undefined;
+    const impl = vi.fn((_url: string | URL | Request, init?: RequestInit) => {
+      seenSignal = init?.signal ?? undefined;
+      return Promise.resolve(jsonResponse(TEAM_SLOTS));
+    }) as unknown as typeof fetch;
+    const fast = new CalendarClient({ fetchImpl: impl, timeoutMs: 8000, maxRetries: 0 }, config());
+    await fast.getTeamSlots('lead-1', 'UTC');
+    // An AbortSignal.timeout(...) signal is attached (the short interactive bound).
+    expect(seenSignal).toBeInstanceOf(AbortSignal);
+  });
 });
 
 describe('bookTeamAppointment (write)', () => {
