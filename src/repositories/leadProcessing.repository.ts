@@ -217,6 +217,35 @@ export async function completeProcessing(
 }
 
 /**
+ * Finishes a lead's processing once its in-flight outbound call reaches a
+ * terminal state (CALLING -> COMPLETED), driven by the Retell webhook.
+ *
+ * Status-guarded CAS matching ONLY `status = CALLING` (no version token, because
+ * a webhook does not hold one). This is what protects against a duplicate or late
+ * event overwriting a newer processing attempt: once the lead has moved on (to
+ * COMPLETED, or to a different state from a later attempt) the update matches
+ * nothing and is a safe no-op. Idempotent — a redelivered terminal event returns
+ * `false`.
+ *
+ * Deliberately marks only that the AI caller's workflow for this lead is finished;
+ * the per-call telephony/business result lives on the CallRecord. Retry policy for
+ * no-answer/busy is a separate, explicit decision and is NOT applied here.
+ */
+export async function completeCallingLead(leadId: string): Promise<boolean> {
+  const { count } = await prisma.leadProcessing.updateMany({
+    where: { leadId, status: ProcessingStatus.CALLING },
+    data: {
+      status: ProcessingStatus.COMPLETED,
+      version: { increment: 1 },
+      claimedAt: null,
+      claimedBy: null,
+    },
+  });
+
+  return count === 1;
+}
+
+/**
  * Returns a lead to PENDING so it can be picked up again.
  *
  * Deliberately refuses to requeue a lead in the CALLING state: an outbound call

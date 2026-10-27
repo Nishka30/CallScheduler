@@ -1,3 +1,4 @@
+import { CallStatus, type CallRecord } from '@prisma/client';
 import { logger } from '../lib/logger.js';
 import { verifyRetellSignature } from '../integrations/retell/webhookVerify.js';
 import {
@@ -9,6 +10,16 @@ import {
   applyWebhookCallEvent,
   type WebhookCallUpdate,
 } from '../repositories/callRecord.repository.js';
+import { completeCallingLead } from '../repositories/leadProcessing.repository.js';
+
+/** Call statuses that mean the attempt is finished (telephony-terminal). */
+const TERMINAL_CALL_STATUSES: ReadonlySet<CallStatus> = new Set([
+  CallStatus.COMPLETED,
+  CallStatus.FAILED,
+  CallStatus.NO_ANSWER,
+  CallStatus.BUSY,
+  CallStatus.CANCELED,
+]);
 
 /**
  * Outcome of processing one webhook delivery. HTTP-agnostic so it can be unit
@@ -104,9 +115,40 @@ export async function processRetellWebhook(input: ProcessWebhookInput): Promise<
     return { status: 'unmatched', event: event.event, callId: call.call_id };
   }
 
+  // When the call has reached a terminal state, finish the lead's processing
+  // (CALLING -> COMPLETED). This is SECONDARY to the authoritative call-record
+  // update above: a failure here is logged but never fails the webhook (the record
+  // is already persisted and a later event / reaper can retry), and a duplicate or
+  // late terminal event is a safe, status-guarded no-op.
+  await completeLeadIfCallTerminal(result.record, call.call_id);
+
   logger.info(
     { event: event.event, callId: call.call_id, changed: result.changed },
     'retell webhook applied',
   );
   return { status: 'processed', event: event.event, callId: call.call_id, changed: result.changed };
+}
+
+async function completeLeadIfCallTerminal(
+  record: CallRecord | undefined,
+  callId: string,
+): Promise<void> {
+  if (!record || !TERMINAL_CALL_STATUSES.has(record.status)) return;
+
+  try {
+    const completed = await completeCallingLead(record.leadId);
+    logger.info(
+      { callId, leadId: record.leadId, completed },
+      completed
+        ? 'lead processing completed after terminal call event'
+        : 'terminal call event: lead already finished or advanced; no transition applied',
+    );
+  } catch (error) {
+    // Do not fail the webhook: the call record is already updated. Log for a reaper
+    // / later event to reconcile.
+    logger.error(
+      { callId, leadId: record.leadId, err: error instanceof Error ? error.name : 'unknown' },
+      'failed to complete lead processing after terminal call event',
+    );
+  }
 }

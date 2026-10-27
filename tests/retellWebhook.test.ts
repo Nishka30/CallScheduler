@@ -14,6 +14,11 @@ vi.mock('../src/repositories/callRecord.repository.js', () => ({
   applyWebhookCallEvent: (...args: unknown[]) => applyWebhookCallEvent(...args),
 }));
 
+const completeCallingLead = vi.fn();
+vi.mock('../src/repositories/leadProcessing.repository.js', () => ({
+  completeCallingLead: (...args: unknown[]) => completeCallingLead(...args),
+}));
+
 const { processRetellWebhook } = await import('../src/services/retellWebhook.service.js');
 
 const KEY = 'retell-test-key-never-real';
@@ -29,6 +34,7 @@ function sign(body: string, key: string, ts: number): string {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  completeCallingLead.mockResolvedValue(true);
 });
 
 describe('verifyRetellSignature', () => {
@@ -188,5 +194,98 @@ describe('processRetellWebhook', () => {
     applyWebhookCallEvent.mockResolvedValue({ matched: true, changed: true });
     const result = await run(call());
     expect(JSON.stringify(result)).not.toContain(KEY);
+  });
+});
+
+describe('processRetellWebhook — terminal lead-processing transition', () => {
+  function call(overrides: Record<string, unknown> = {}): string {
+    return JSON.stringify({
+      event: 'call_ended',
+      call: { call_id: 'call_1', call_status: 'ended', ...overrides },
+    });
+  }
+  function run(body: string) {
+    return processRetellWebhook({
+      rawBody: body,
+      signature: sign(body, KEY, NOW),
+      apiKey: KEY,
+      now: NOW,
+    });
+  }
+  const terminal = (status: CallStatus) => ({
+    matched: true,
+    changed: true,
+    record: { leadId: 'lead-1', status },
+  });
+
+  it('completes the lead (CALLING→COMPLETED) when the call reaches a terminal state', async () => {
+    applyWebhookCallEvent.mockResolvedValue(terminal(CallStatus.COMPLETED));
+
+    const result = await run(call());
+
+    expect(result.status).toBe('processed');
+    expect(completeCallingLead).toHaveBeenCalledWith('lead-1');
+  });
+
+  it('handles a duplicate/late terminal event as a safe no-op (lead already finished)', async () => {
+    applyWebhookCallEvent.mockResolvedValue(terminal(CallStatus.COMPLETED));
+    completeCallingLead.mockResolvedValue(false); // status guard matched nothing
+
+    const result = await run(call());
+
+    expect(result.status).toBe('processed'); // still acknowledged, no error
+    expect(completeCallingLead).toHaveBeenCalledTimes(1);
+  });
+
+  it('transitions for every terminal call status (no_answer / busy / failed / canceled)', async () => {
+    for (const status of [
+      CallStatus.NO_ANSWER,
+      CallStatus.BUSY,
+      CallStatus.FAILED,
+      CallStatus.CANCELED,
+    ]) {
+      completeCallingLead.mockClear();
+      applyWebhookCallEvent.mockResolvedValue(terminal(status));
+      await run(call());
+      expect(completeCallingLead).toHaveBeenCalledWith('lead-1');
+    }
+  });
+
+  it('does NOT transition the lead for a non-terminal call status', async () => {
+    applyWebhookCallEvent.mockResolvedValue({
+      matched: true,
+      changed: true,
+      record: { leadId: 'lead-1', status: CallStatus.IN_PROGRESS },
+    });
+
+    const body = JSON.stringify({
+      event: 'call_started',
+      call: { call_id: 'call_1', call_status: 'ongoing' },
+    });
+    const result = await run(body);
+
+    expect(result.status).toBe('processed');
+    expect(completeCallingLead).not.toHaveBeenCalled();
+  });
+
+  it('does NOT transition the lead for an unmatched call id', async () => {
+    applyWebhookCallEvent.mockResolvedValue({ matched: false, changed: false });
+
+    const result = await run(call());
+
+    expect(result.status).toBe('unmatched');
+    expect(completeCallingLead).not.toHaveBeenCalled();
+  });
+
+  it('acknowledges the webhook even if the lead transition fails (logged, never thrown)', async () => {
+    applyWebhookCallEvent.mockResolvedValue(terminal(CallStatus.COMPLETED));
+    completeCallingLead.mockRejectedValue(new Error('db blip'));
+
+    // The call record is already updated; a lead-transition failure must not force
+    // Retell to retry (the next event / a reaper reconciles it).
+    const result = await run(call());
+
+    expect(result.status).toBe('processed');
+    expect(completeCallingLead).toHaveBeenCalledWith('lead-1');
   });
 });

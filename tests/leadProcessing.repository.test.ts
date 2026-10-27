@@ -27,6 +27,7 @@ const {
   claimLeadForProcessing,
   claimEligibleLead,
   completeProcessing,
+  completeCallingLead,
   ensureProcessingRecord,
   markCalling,
   requeueForRetry,
@@ -283,6 +284,32 @@ describe('completeProcessing', () => {
     leadProcessing.updateMany.mockResolvedValue({ count: 0 });
 
     expect(await completeProcessing('id-1', 2, ProcessingStatus.COMPLETED)).toBe(false);
+  });
+});
+
+describe('completeCallingLead', () => {
+  it('transitions a CALLING lead to COMPLETED and releases the claim (status-guarded, no version)', async () => {
+    leadProcessing.updateMany.mockResolvedValue({ count: 1 });
+
+    const ok = await completeCallingLead('lead-1');
+
+    expect(ok).toBe(true);
+    const call = leadProcessing.updateMany.mock.calls[0]![0] as {
+      where: Record<string, unknown>;
+      data: Record<string, unknown>;
+    };
+    // Matches ONLY a CALLING lead, so a late/duplicate event can't touch a newer state.
+    expect(call.where).toEqual({ leadId: 'lead-1', status: ProcessingStatus.CALLING });
+    expect(call.data.status).toBe(ProcessingStatus.COMPLETED);
+    expect(call.data.version).toEqual({ increment: 1 });
+    expect(call.data.claimedAt).toBeNull();
+    expect(call.data.claimedBy).toBeNull();
+  });
+
+  it('returns false (safe no-op) when the lead is not CALLING — duplicate/late event or newer attempt', async () => {
+    leadProcessing.updateMany.mockResolvedValue({ count: 0 });
+
+    expect(await completeCallingLead('lead-1')).toBe(false);
   });
 });
 
