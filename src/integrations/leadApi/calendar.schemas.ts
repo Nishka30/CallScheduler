@@ -45,7 +45,13 @@ const decisionSchema = z
     mode: z.string().min(1),
     fallback: z.boolean().nullish(),
     reason: z.string().nullish(),
-    owner: agentRefSchema.nullish(),
+    /**
+     * The chosen owner's EMAIL (string) in `owner` mode, or `null` in
+     * `pool`/`none` mode — NOT an agent object. The full agent object is the
+     * top-level `owner` field below. Verified against the live owner-mode
+     * response on 2026-10-28 (`decision.owner` was an email string).
+     */
+    owner: z.string().nullish(),
   })
   .passthrough();
 

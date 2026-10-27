@@ -58,10 +58,11 @@ export async function offerTeamSlots(
           return slot;
         });
 
+  // In owner mode the owner's name is read back to the customer. The full agent
+  // object is the top-level `owner`; `decision.owner` is only the owner's email
+  // string, so the name comes from `owner` (then the agents list as a fallback).
   const ownerAgentName =
-    mode === 'owner'
-      ? (res.owner?.name ?? res.decision.owner?.name ?? res.agents?.[0]?.name ?? undefined)
-      : undefined;
+    mode === 'owner' ? (res.owner?.name ?? res.agents?.[0]?.name ?? undefined) : undefined;
 
   return {
     mode,

@@ -106,7 +106,7 @@ describe('getTeamSlots', () => {
     const full = {
       lead_id: 42, // number id is coerced to string
       brand: 'himalayanwonders.com',
-      decision: { mode: 'owner', fallback: true, reason: 'owner', owner: { name: 'Sue' } },
+      decision: { mode: 'owner', fallback: true, reason: 'owner', owner: 'sue@hw.com' },
       owner: { email: 'sue@hw.com', name: 'Sue', first_name: 'Sue' },
       agents: [{ email: 'a@hw.com', name: 'Ana', extra: 'kept' }],
       from: '2026-11-03',
@@ -188,6 +188,61 @@ describe('getTeamSlots', () => {
     expect(res.slots).toHaveLength(1);
     expect(res.slots[0]!.starts_at).toBe('2026-10-28T03:30:00.000Z');
     expect(res.slots[0]!.agents).toEqual(['agent@example.com']);
+  });
+
+  // Pinned to the ACTUAL owner-mode body captured read-only on 2026-10-28
+  // (lead 26fe881c…). In owner mode `decision.owner` is the owner's EMAIL STRING
+  // (not an agent object); the full agent object is the top-level `owner`. This is
+  // the shape that previously failed with `decision.owner: invalid_type`.
+  it('accepts the real owner-mode contract: decision.owner is an email string', async () => {
+    const ownerMode = {
+      lead_id: '26fe881c-0000-0000-0000-000000000000',
+      brand: 'himalayanwonders.com',
+      decision: {
+        mode: 'owner',
+        owner: 'owner@example.com', // ← email STRING, the field that regressed
+        fallback: false,
+        reason: 'owner assigned',
+      },
+      owner: {
+        email: 'owner@example.com',
+        name: 'Owner Example',
+        first_name: 'Owner',
+        calendar_slug: 'owner-example',
+        time_zone: 'Asia/Kolkata',
+      },
+      agents: [{ email: 'owner@example.com', name: 'Owner Example' }],
+      from: '2026-10-28T06:00:00.000Z',
+      to: '2026-11-04T06:00:00.000Z',
+      slots: [
+        {
+          starts_at: '2026-10-29T04:30:00.000Z',
+          ends_at: '2026-10-29T05:00:00.000Z',
+          agents: ['owner@example.com'],
+          local: 'Thu 29 Oct, 10:00 AM',
+        },
+      ],
+    };
+    const res = await client(stubFetch(jsonResponse(ownerMode)).impl).getTeamSlots(
+      'lead-1',
+      'Asia/Kolkata',
+    );
+    expect(res.decision.mode).toBe('owner');
+    expect(res.decision.owner).toBe('owner@example.com'); // string, accepted
+    expect(res.owner?.name).toBe('Owner Example'); // full object at top level
+    expect(res.slots[0]!.starts_at).toBe('2026-10-29T04:30:00.000Z');
+  });
+
+  it('still rejects a non-string/non-null decision.owner (not blindly loosened)', async () => {
+    const bad = {
+      decision: { mode: 'owner', owner: 123 }, // a number is not a valid owner
+      slots: [],
+    };
+    const e = await rejection(
+      client(stubFetch(jsonResponse(bad)).impl).getTeamSlots('lead-1', 'UTC'),
+    );
+    expect(e.kind).toBe('contract');
+    expect((e.issues ?? []).join(' | ')).toContain('decision.owner');
   });
 
   // The one live, reproducible failure: a non-IANA timezone the agent's LLM may

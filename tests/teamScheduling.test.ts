@@ -42,6 +42,18 @@ describe('offerTeamSlots', () => {
     expect(offer.ownerAgentName).toBe('Sue');
   });
 
+  it('owner mode (real shape): decision.owner is an email string, name comes from top-level owner', async () => {
+    const { client } = fakeClient({
+      decision: { mode: 'owner', owner: 'sue@hw.com', fallback: false, reason: 'owner assigned' },
+      owner: { email: 'sue@hw.com', name: 'Sue', first_name: 'Sue' },
+      slots: [slot('2026-11-03T09:00:00Z')],
+    });
+    const offer = await offerTeamSlots('lead-1', 'UTC', client);
+    expect(offer.mode).toBe('owner');
+    expect(offer.ownerAgentName).toBe('Sue');
+    expect(offer.slots).toHaveLength(1);
+  });
+
   it('none mode: never offers a slot', async () => {
     const { client } = fakeClient({ decision: { mode: 'none', fallback: false }, slots: [] });
     const offer = await offerTeamSlots('lead-1', 'UTC', client);
