@@ -196,17 +196,17 @@ describe('processBookingFunction — get_available_slots', () => {
     expect(res.payload.slots).toBeUndefined(); // never fabricate slots
   });
 
-  it('degrades gracefully when the agent supplies a non-IANA timezone (upstream 400)', async () => {
-    // Reproduced live: "GMT+5:30" / "India Standard Time" → the Lead API 400s.
-    const raw = body('get_available_slots', { timezone: 'GMT+5:30' });
-    const badTz = new LeadApiError(
+  it('degrades gracefully when the team-slots read returns an upstream 400', async () => {
+    // A valid, normalised tz still reaches the CRM; an upstream 400 must degrade.
+    const raw = body('get_available_slots', { timezone: 'Asia/Kolkata' });
+    const badReq = new LeadApiError(
       'client',
-      'calendar GET /api/crm/leads/lead-real/team-slots returned 400: invalid timezone',
+      'calendar GET /api/crm/leads/lead-real/team-slots returned 400: bad request',
       { status: 400, path: '/api/crm/leads/lead-real/team-slots' },
     );
     const res = await processBookingFunction(
       input(raw),
-      deps({ offerSlots: () => Promise.reject(badTz) }),
+      deps({ offerSlots: () => Promise.reject(badReq) }),
     );
     expect(res.status).toBe('ok');
     if (res.status !== 'ok') return;
@@ -215,6 +215,36 @@ describe('processBookingFunction — get_available_slots', () => {
     const serialized = JSON.stringify(res.payload);
     expect(serialized).not.toContain('400');
     expect(serialized).not.toContain('/api/crm');
+  });
+
+  it('normalises an alias/offset timezone to IANA before calling the CRM', async () => {
+    // "GMT+5:30" → Asia/Kolkata (the CRM 400s on the raw form).
+    const raw = body('get_available_slots', { timezone: 'GMT+5:30' });
+    let seenTz: string | undefined;
+    const res = await processBookingFunction(
+      input(raw),
+      deps({
+        offerSlots: (_lead, tz) => {
+          seenTz = tz;
+          return Promise.resolve(offer());
+        },
+      }),
+    );
+    expect(res.status).toBe('ok');
+    if (res.status !== 'ok') return;
+    expect(seenTz).toBe('Asia/Kolkata'); // the CRM never sees "GMT+5:30"
+    expect(res.payload.available).toBe(true);
+  });
+
+  it('asks again (never calls the CRM) for an unknown timezone', async () => {
+    const raw = body('get_available_slots', { timezone: 'invalid-zone' });
+    const spy = vi.fn((_lead: string, _tz: string) => Promise.resolve(offer()));
+    const res = await processBookingFunction(input(raw), deps({ offerSlots: spy }));
+    expect(res.status).toBe('ok');
+    if (res.status !== 'ok') return;
+    expect(res.payload.available).toBe(false);
+    expect(String(res.payload.error)).toMatch(/timezone/i);
+    expect(spy).not.toHaveBeenCalled(); // short-circuited; no wasted CRM 400
   });
 
   it('degrades gracefully when the team-slots read times out', async () => {
@@ -407,6 +437,45 @@ describe('processBookingFunction — book_consultation', () => {
     if (res.status !== 'ok') return;
     expect(res.payload.booked).toBe(false);
     expect(String(res.payload.reason).toLowerCase()).toContain('follow');
+  });
+
+  it('normalises the timezone for booking (alias → IANA) and preserves the UTC starts_at', async () => {
+    const raw = body('book_consultation', { ...okArgs, timezone: 'India Standard Time' });
+    let captured: BookingRequest | undefined;
+    let offerTz: string | undefined;
+    const res = await processBookingFunction(
+      input(raw),
+      deps({
+        offerSlots: (_lead, tz) => {
+          offerTz = tz;
+          return Promise.resolve(offer());
+        },
+        book: (req) => {
+          captured = req;
+          return Promise.resolve({ outcome: 'booked', appointmentId: 'a' });
+        },
+      }),
+    );
+    expect(res.status).toBe('ok');
+    expect(offerTz).toBe('Asia/Kolkata');
+    expect(captured?.customerTz).toBe('Asia/Kolkata'); // normalised IANA
+    expect(captured?.chosenStartsAt).toBe('2026-10-25T09:00:00.000Z'); // UTC untouched
+  });
+
+  it('refuses to book (and never calls the CRM) for an unknown timezone', async () => {
+    const raw = body('book_consultation', { ...okArgs, timezone: 'invalid-zone' });
+    const offerSpy = vi.fn((_lead: string, _tz: string) => Promise.resolve(offer()));
+    const bookSpy = bookMock();
+    const res = await processBookingFunction(
+      input(raw),
+      deps({ offerSlots: offerSpy, book: bookSpy }),
+    );
+    expect(res.status).toBe('ok');
+    if (res.status !== 'ok') return;
+    expect(res.payload.booked).toBe(false);
+    expect(String(res.payload.reason)).toMatch(/timezone/i);
+    expect(offerSpy).not.toHaveBeenCalled();
+    expect(bookSpy).not.toHaveBeenCalled();
   });
 
   it('degrades gracefully (no 500, no booking) when the fresh-availability read fails', async () => {

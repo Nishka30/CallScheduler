@@ -10,6 +10,7 @@ import {
 } from '../integrations/retell/functionSchemas.js';
 import { CalendarClient } from '../integrations/leadApi/calendar.client.js';
 import { LeadApiError } from '../integrations/leadApi/errors.js';
+import { normalizeTimezone } from '../lib/timezone.js';
 import { offerTeamSlots, type SlotOffer } from './teamScheduling.service.js';
 import {
   bookAppointment,
@@ -196,11 +197,26 @@ async function handleGetSlots(
     };
   }
 
+  // Normalise the LLM-supplied timezone to an IANA id the CRM accepts (it 400s on
+  // "India Standard Time", "GMT+5:30", etc.). Unknown values ask, never guess.
+  const tz = normalizeTimezone(args.data.timezone);
+  if (tz === null) {
+    return {
+      status: 'ok',
+      operation: 'get_slots',
+      payload: {
+        available: false,
+        error:
+          'I need the customer’s timezone in a standard form (for example “Asia/Kolkata”). Please confirm their city or country.',
+      },
+    };
+  }
+
   let offer: SlotOffer;
   try {
     offer = deps.offerSlots
-      ? await deps.offerSlots(leadId, args.data.timezone)
-      : await offerTeamSlots(leadId, args.data.timezone, interactiveCalendarClient(), {
+      ? await deps.offerSlots(leadId, tz)
+      : await offerTeamSlots(leadId, tz, interactiveCalendarClient(), {
           limit: SLOT_LIMIT,
         });
   } catch (error) {
@@ -254,6 +270,14 @@ async function handleBook(
     return bookError('Please confirm the destination and time with the customer before booking.');
   }
 
+  // Normalise the timezone to an IANA id (used for both availability and the
+  // booking's customer_tz). The chosen `starts_at` is a UTC instant and is never
+  // altered by this. Unknown timezone → ask, do not book.
+  const tz = normalizeTimezone(args.timezone);
+  if (tz === null) {
+    return bookError('I need the customer’s timezone in a standard form before I can book.');
+  }
+
   // 4. Idempotency: if this lead is already booked, return that — never rebook.
   const findExisting = deps.findExistingAppointment ?? defaultFindExistingAppointment;
   const existing = await findExisting(leadId);
@@ -281,8 +305,8 @@ async function handleBook(
   let offer: SlotOffer;
   try {
     offer = deps.offerSlots
-      ? await deps.offerSlots(leadId, args.timezone)
-      : await offerTeamSlots(leadId, args.timezone, interactiveCalendarClient(), { limit: 20 });
+      ? await deps.offerSlots(leadId, tz)
+      : await offerTeamSlots(leadId, tz, interactiveCalendarClient(), { limit: 20 });
   } catch (error) {
     logSlotsLookupFailure(leadId, BOOK_FUNCTION, error);
     return bookError(
@@ -310,7 +334,7 @@ async function handleBook(
     leadId,
     mode: offer.mode,
     chosenStartsAt: args.starts_at,
-    customerTz: args.timezone,
+    customerTz: tz,
     meetingType,
     notes: note,
     customerAgreed: true,
