@@ -164,11 +164,37 @@ export type LeadDetail = z.infer<typeof leadDetailSchema>;
  * paymentRecords. `counts` carries pageViews, inquiries, emailsSent,
  * mailboxMessages, emailOpens, emailClicks, calls, texts and payments.
  */
+/**
+ * One entry of the person response's `appointments[]` — the authoritative
+ * team-booking record (verified live 2026-10-28; the documented `bookings[]` is a
+ * separate legacy concept and was empty). Deliberately PERMISSIVE (every field
+ * nullish, `.passthrough()`) so a new/odd entry can never make `getPerson` fail
+ * for the call pipeline; the booking reconciler validates the fields it needs.
+ */
+export const personAppointmentSchema = z
+  .object({
+    id: z.union([z.string(), z.number()]).transform(String).nullish(),
+    lead_id: z.union([z.string(), z.number()]).transform(String).nullish(),
+    starts_at: z.string().nullish(),
+    ends_at: z.string().nullish(),
+    status: z.string().nullish(),
+    meeting_type: z.string().nullish(),
+    customer_tz: z.string().nullish(),
+    booked_by: z.string().nullish(),
+    agent_email: z.string().nullish(),
+    agent_name: z.string().nullish(),
+  })
+  .passthrough();
+
+export type PersonAppointment = z.infer<typeof personAppointmentSchema>;
+
 export const personHistorySchema = z
   .object({
     profile: z.record(z.unknown()).nullish(),
     leads: z.array(z.unknown()).nullish(),
     bookings: z.array(z.unknown()).nullish(),
+    /** Team bookings for this person; the read-only booking-reconciliation surface. */
+    appointments: z.array(personAppointmentSchema).nullish(),
     notes: z.array(z.unknown()).nullish(),
     edits: z.array(z.unknown()).nullish(),
   })

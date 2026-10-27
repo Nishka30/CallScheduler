@@ -389,6 +389,36 @@ describe('processBookingFunction — book_consultation', () => {
     expect(spy).not.toHaveBeenCalled();
   });
 
+  it('(5) is idempotent after a reconciled booking: a later call returns already_booked without re-booking', async () => {
+    // Once reconciliation has persisted the appointment, the idempotency guard
+    // short-circuits any further book_consultation for this lead.
+    const raw = body('book_consultation', okArgs);
+    const offerSpy = vi.fn((_lead: string, _tz: string) => Promise.resolve(offer()));
+    const bookSpy = bookMock();
+    const res = await processBookingFunction(
+      input(raw),
+      deps({
+        findExistingAppointment: () =>
+          Promise.resolve({
+            appointmentId: 'appt_real',
+            startsAt: new Date('2026-10-25T09:00:00.000Z'),
+          }),
+        offerSlots: offerSpy,
+        book: bookSpy,
+      }),
+    );
+    expect(res.status).toBe('ok');
+    if (res.status !== 'ok') return;
+    expect(res.payload).toMatchObject({
+      booked: true,
+      already_booked: true,
+      appointment_id: 'appt_real',
+      starts_at: '2026-10-25T09:00:00.000Z',
+    });
+    expect(offerSpy).not.toHaveBeenCalled(); // no fresh availability read
+    expect(bookSpy).not.toHaveBeenCalled(); // never re-books
+  });
+
   it('does not claim success and does not rebook on an uncertain upstream result', async () => {
     const raw = body('book_consultation', okArgs);
     const res = await processBookingFunction(

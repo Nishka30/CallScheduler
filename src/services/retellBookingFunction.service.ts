@@ -58,7 +58,9 @@ export type BookingFunctionResult =
 export interface BookingFunctionDeps {
   verify?: typeof verifyRetellSignature;
   /** Resolves the authoritative lead for a provider call id (server-side binding). */
-  findCallByProviderId?: (callId: string) => Promise<{ leadId: string } | null>;
+  findCallByProviderId?: (
+    callId: string,
+  ) => Promise<{ leadId: string; personKey?: string | null } | null>;
   /** Existing appointment for a lead, for idempotency. */
   findExistingAppointment?: (
     leadId: string,
@@ -161,6 +163,7 @@ export async function processBookingFunction(
     return { status: 'unknown_call', reason: 'call id is not associated with a known lead' };
   }
   const leadId = callRecord.leadId;
+  const personKey = callRecord.personKey ?? undefined;
 
   // Defence in depth: if Retell echoes a lead id in metadata, it must agree.
   const metaLeadId = readMetaLeadId(request.call.metadata);
@@ -178,7 +181,7 @@ export async function processBookingFunction(
     return handleGetSlots(leadId, args, deps);
   }
   if (functionName === BOOK_FUNCTION) {
-    return handleBook(leadId, args, deps);
+    return handleBook(leadId, personKey, args, deps);
   }
   return { status: 'bad_request', reason: `unsupported function "${functionName ?? '(none)'}"` };
 }
@@ -256,6 +259,7 @@ async function handleGetSlots(
 
 async function handleBook(
   leadId: string,
+  personKey: string | undefined,
   rawArgs: Record<string, unknown>,
   deps: BookingFunctionDeps,
 ): Promise<BookingFunctionResult> {
@@ -339,6 +343,9 @@ async function handleBook(
     notes: note,
     customerAgreed: true,
     offeredSlots: offer.slots,
+    // Lets an uncertain booking be reconciled read-only against the person's
+    // appointments without an extra lead lookup.
+    ...(personKey === undefined ? {} : { personKey }),
   };
 
   const result = deps.book ? await deps.book(request) : await bookAppointment(request);
@@ -404,9 +411,11 @@ function readMetaLeadId(metadata: Record<string, unknown> | null | undefined): s
   return typeof value === 'string' && value.length > 0 ? value : undefined;
 }
 
-async function defaultFindCall(callId: string): Promise<{ leadId: string } | null> {
+async function defaultFindCall(
+  callId: string,
+): Promise<{ leadId: string; personKey?: string | null } | null> {
   const record = await findByRetellCallId(callId);
-  return record ? { leadId: record.leadId } : null;
+  return record ? { leadId: record.leadId, personKey: record.personKey } : null;
 }
 
 async function defaultFindExistingAppointment(

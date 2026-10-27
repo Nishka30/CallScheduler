@@ -1,7 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { LeadApiError } from '../src/integrations/leadApi/errors.js';
+import { personHistorySchema } from '../src/integrations/leadApi/schemas.js';
 import type { CalendarClient } from '../src/integrations/leadApi/calendar.client.js';
-import type { BookingRequest } from '../src/services/appointmentBooking.service.js';
+import type { LeadApiClient } from '../src/integrations/leadApi/client.js';
+import type {
+  BookingRequest,
+  MatchedAppointment,
+} from '../src/services/appointmentBooking.service.js';
 
 vi.mock('../src/lib/prisma.js', () => ({
   prisma: { $queryRaw: vi.fn() },
@@ -14,7 +19,21 @@ vi.mock('../src/repositories/appointmentRecord.repository.js', () => ({
   findLatestAppointmentForLead: vi.fn(),
 }));
 
-const { bookAppointment } = await import('../src/services/appointmentBooking.service.js');
+const { bookAppointment, reconcileTeamBooking } =
+  await import('../src/services/appointmentBooking.service.js');
+
+const TIMEOUT = new LeadApiError('network', 'timed out', { path: '/api/crm/appointments/team' });
+
+/** A read-only Lead API client stub exposing only what the reconciler uses. */
+function fakeLeadApi(
+  over: Partial<Pick<LeadApiClient, 'getLead' | 'getPerson'>> = {},
+): Pick<LeadApiClient, 'getLead' | 'getPerson'> {
+  return {
+    getLead: vi.fn(),
+    getPerson: vi.fn(),
+    ...over,
+  };
+}
 
 const SLOT = {
   startsAt: '2026-11-03T14:15:00Z',
@@ -149,9 +168,164 @@ describe('bookAppointment — booking', () => {
     const { client, bookTeamAppointment } = fakeClient(
       new LeadApiError('network', 'timed out', { path: '/x' }),
     );
-    const r = await bookAppointment(request(), { client });
+    // No reconcile dep and no leadApiClient → reconciler can't confirm, stays uncertain.
+    const r = await bookAppointment(request(), {
+      client,
+      reconcile: () => Promise.resolve(null),
+    });
     expect(r.outcome).toBe('uncertain');
     expect(bookTeamAppointment).toHaveBeenCalledTimes(1);
     expect(recordAppointment).not.toHaveBeenCalled();
+  });
+});
+
+describe('bookAppointment — uncertain → read-only reconciliation (Fix A)', () => {
+  const matched: MatchedAppointment = {
+    appointmentId: 'appt_real',
+    startsAt: '2026-11-03T14:15:00Z',
+    status: 'booked',
+    meetingType: 'video',
+    agentName: 'Ana',
+    agentEmail: 'a@hw.com',
+  };
+
+  it('(1) upgrades an uncertain write to booked and persists when reconciliation confirms', async () => {
+    const { client, bookTeamAppointment } = fakeClient(TIMEOUT);
+    const reconcile = vi.fn(() => Promise.resolve(matched));
+
+    const r = await bookAppointment(request(), { client, reconcile });
+
+    expect(r).toEqual({ outcome: 'booked', appointmentId: 'appt_real', agentName: 'Ana' });
+    expect(bookTeamAppointment).toHaveBeenCalledTimes(1); // never resubmitted
+    expect(recordAppointment).toHaveBeenCalledWith(
+      expect.objectContaining({
+        leadId: 'lead-1',
+        appointmentId: 'appt_real',
+        decisionMode: 'pool',
+        agentEmail: 'a@hw.com',
+      }),
+    );
+  });
+
+  it('(2) preserves the uncertain response when reconciliation finds no match', async () => {
+    const { client } = fakeClient(TIMEOUT);
+    const r = await bookAppointment(request(), { client, reconcile: () => Promise.resolve(null) });
+    expect(r.outcome).toBe('uncertain');
+    expect(recordAppointment).not.toHaveBeenCalled();
+  });
+
+  it('(3) preserves uncertain (never throws, never claims success) when the reconcile read fails', async () => {
+    const { client } = fakeClient(TIMEOUT);
+    const r = await bookAppointment(request(), {
+      client,
+      reconcile: () => Promise.reject(new Error('person endpoint timed out again')),
+    });
+    expect(r.outcome).toBe('uncertain');
+    expect(recordAppointment).not.toHaveBeenCalled();
+  });
+});
+
+describe('reconcileTeamBooking — read-only match (Fix A)', () => {
+  const booked = (over: Record<string, unknown>) => ({
+    id: 'x',
+    lead_id: 'lead-1',
+    status: 'booked',
+    starts_at: '2026-11-03T14:15:00+00:00',
+    ...over,
+  });
+
+  it('(4) matches only the right lead + instant + booked status (no false positives)', async () => {
+    const getPerson = vi.fn().mockResolvedValue({
+      appointments: [
+        booked({ id: 'other-lead', lead_id: 'someone-else' }), // wrong lead
+        booked({ id: 'wrong-time', starts_at: '2026-11-04T09:00:00Z' }), // wrong instant
+        booked({ id: 'not-booked', status: 'cancelled' }), // wrong status
+        booked({ id: 'match', meeting_type: 'video', agent_name: 'Ana', agent_email: 'a@hw.com' }),
+      ],
+    });
+    const leadApi = fakeLeadApi({ getPerson });
+
+    const r = await reconcileTeamBooking(
+      // '…Z' vs the entry's '+00:00' is the same instant — matching must normalise.
+      { leadId: 'lead-1', startsAt: '2026-11-03T14:15:00.000Z', personKey: 'person:1' },
+      { leadApiClient: leadApi },
+    );
+
+    expect(r?.appointmentId).toBe('match');
+    expect(r?.agentName).toBe('Ana');
+    expect(leadApi.getLead).not.toHaveBeenCalled(); // personKey supplied → no extra lookup
+  });
+
+  it('returns null when no appointment matches', async () => {
+    const getPerson = vi.fn().mockResolvedValue({
+      appointments: [booked({ id: 'wrong', starts_at: '2026-12-01T09:00:00Z' })],
+    });
+    const r = await reconcileTeamBooking(
+      { leadId: 'lead-1', startsAt: '2026-11-03T14:15:00Z', personKey: 'person:1' },
+      { leadApiClient: fakeLeadApi({ getPerson }) },
+    );
+    expect(r).toBeNull();
+  });
+
+  it('resolves the person key from the lead detail when not supplied', async () => {
+    const getLead = vi.fn().mockResolvedValue({ personKey: 'person:resolved' });
+    const getPerson = vi.fn().mockResolvedValue({ appointments: [booked({ id: 'match' })] });
+    const leadApi = fakeLeadApi({ getLead, getPerson });
+
+    const r = await reconcileTeamBooking(
+      { leadId: 'lead-1', startsAt: '2026-11-03T14:15:00Z' },
+      { leadApiClient: leadApi },
+    );
+
+    expect(getLead).toHaveBeenCalledWith('lead-1');
+    expect(getPerson).toHaveBeenCalledWith('person:resolved');
+    expect(r?.appointmentId).toBe('match');
+  });
+
+  it('returns null (never throws) when the person read fails', async () => {
+    const getPerson = vi
+      .fn()
+      .mockRejectedValue(new LeadApiError('network', 'timeout', { path: '/p' }));
+    const r = await reconcileTeamBooking(
+      { leadId: 'lead-1', startsAt: '2026-11-03T14:15:00Z', personKey: 'person:1' },
+      { leadApiClient: fakeLeadApi({ getPerson }) },
+    );
+    expect(r).toBeNull();
+  });
+});
+
+describe('personHistorySchema — appointments[] shape (Fix A, regression)', () => {
+  it('(6) parses the real appointments[] shape and coerces ids to strings', () => {
+    const parsed = personHistorySchema.safeParse({
+      bookings: [],
+      appointments: [
+        {
+          id: 123, // numeric id coerces to string
+          lead_id: '7b4f404d-6a0b-4e90-80e7-8d59295baed6',
+          starts_at: '2026-10-27T20:45:00+00:00',
+          ends_at: '2026-10-27T21:00:00+00:00',
+          status: 'booked',
+          meeting_type: 'video',
+          customer_tz: 'America/Los_Angeles',
+          booked_by: 'caller',
+          agent_email: 'agent@example.com',
+          agent_name: 'Agent Example',
+          google_event_id: 'kept-by-passthrough',
+        },
+      ],
+    });
+    expect(parsed.success).toBe(true);
+    if (!parsed.success) return;
+    const appt = parsed.data.appointments?.[0];
+    expect(appt?.id).toBe('123');
+    expect(appt?.lead_id).toBe('7b4f404d-6a0b-4e90-80e7-8d59295baed6');
+    expect(appt?.status).toBe('booked');
+  });
+
+  it('stays tolerant: a malformed appointment entry never breaks person parsing', () => {
+    const parsed = personHistorySchema.safeParse({
+      appointments: [{ unexpected: true }], // no id/lead_id/etc.
+    });
+    expect(parsed.success).toBe(true);
   });
 });
