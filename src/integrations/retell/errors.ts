@@ -74,3 +74,29 @@ export function classifyStatus(status: number): RetellFailureKind {
   if (status >= 500) return 'server';
   return 'client';
 }
+
+/** Safe, structured, PII-free fields describing a `RetellApiError` for logs. */
+export interface SafeRetellErrorInfo {
+  kind: RetellFailureKind;
+  status?: number;
+  /** The create-call path is a constant with no PII; logged as-is. */
+  path: string;
+  /** The call MAY have been placed; never treat as "not called" / never redial. */
+  uncertain: boolean;
+  /** No external request was made (pure pre-flight refusal). */
+  preflight: boolean;
+}
+
+/**
+ * Reduces a `RetellApiError` to safe log fields: kind, status, path, and the
+ * two safety flags. Never includes the bearer key or the destination number.
+ */
+export function describeRetellError(error: RetellApiError): SafeRetellErrorInfo {
+  return {
+    kind: error.kind,
+    ...(error.status === undefined ? {} : { status: error.status }),
+    path: error.path,
+    uncertain: error.uncertain,
+    preflight: error.preflight,
+  };
+}

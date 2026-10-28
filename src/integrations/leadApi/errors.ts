@@ -80,3 +80,47 @@ export function classifyStatus(status: number): LeadApiFailureKind {
   if (status >= 500) return 'server';
   return 'client';
 }
+
+/**
+ * Rewrites a Lead API path to a safe template for logging. Identifier segments
+ * are replaced with placeholders because a person key can be `email:<address>`
+ * (PII) and a lead id is a raw identifier. The endpoint SHAPE — the useful
+ * diagnostic — is kept; the values are not.
+ */
+export function sanitizeLeadApiPath(path: string): string {
+  return path
+    .replace(/\/persons\/[^/?#]+/i, '/persons/:personKey')
+    .replace(/\/leads\/[^/?#]+/i, '/leads/:leadId')
+    .replace(/\/appointments\/[^/?#]+/i, '/appointments/:id');
+}
+
+/** Safe, structured, PII-free fields describing a `LeadApiError` for logs. */
+export interface SafeLeadApiErrorInfo {
+  kind: LeadApiFailureKind;
+  status?: number;
+  /** Endpoint template, never a raw id/email — see `sanitizeLeadApiPath`. */
+  path: string;
+  /** Whether retrying can ever help (false ⇒ transient). */
+  permanent: boolean;
+  /** For a network failure: whether it was a timeout vs another socket error. */
+  timedOut?: boolean;
+  /** For a contract failure: the Zod issue locations (paths + codes only). */
+  issues?: readonly string[];
+}
+
+/**
+ * Reduces a `LeadApiError` to safe, structured log fields. Never includes the
+ * API key, a raw path/id/email, or an upstream response body — only the kind,
+ * status, templated endpoint, retryability, a timeout flag, and (for contract
+ * errors) the sanitized issue list already carried on the error.
+ */
+export function describeLeadApiError(error: LeadApiError): SafeLeadApiErrorInfo {
+  return {
+    kind: error.kind,
+    ...(error.status === undefined ? {} : { status: error.status }),
+    path: sanitizeLeadApiPath(error.path),
+    permanent: error.permanent,
+    ...(error.kind === 'network' ? { timedOut: /timed out/i.test(error.message) } : {}),
+    ...(error.issues === undefined ? {} : { issues: error.issues }),
+  };
+}

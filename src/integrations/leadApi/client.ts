@@ -1,6 +1,6 @@
 import { env, requireLeadApiKey, type Env } from '../../config/env.js';
 import { logger } from '../../lib/logger.js';
-import { classifyStatus, LeadApiError } from './errors.js';
+import { classifyStatus, LeadApiError, sanitizeLeadApiPath } from './errors.js';
 import {
   apiErrorBodySchema,
   leadDetailSchema,
@@ -147,7 +147,7 @@ export class LeadApiClient {
       if (attempt > 0) {
         const delay = lastError?.retryAfterMs ?? backoffDelayMs(attempt);
         logger.warn(
-          { path, attempt, delayMs: delay, kind: lastError?.kind },
+          { path: sanitizeLeadApiPath(path), attempt, delayMs: delay, kind: lastError?.kind },
           'retrying lead api request',
         );
         await this.sleep(delay);

@@ -5,6 +5,7 @@ import {
 } from '../src/services/leadReevaluationSweep.service.js';
 import type { ReevaluableLead } from '../src/repositories/leadProcessing.repository.js';
 import type { ReevaluationResult } from '../src/services/leadReevaluation.service.js';
+import { LeadApiError } from '../src/integrations/leadApi/errors.js';
 
 vi.mock('../src/lib/prisma.js', () => ({
   prisma: { $queryRaw: vi.fn() },
@@ -206,6 +207,76 @@ describe('ReevaluationSweeper — safety of outcomes', () => {
     expect(s.errors).toBe(1);
     expect(s.stillUnchanged).toBe(1); // the second lead was still processed
     expect(reevaluate).toHaveBeenCalledTimes(2);
+  });
+
+  it('stops retrying after a PERMANENT Lead API error (e.g. 404) — never marks it terminal', async () => {
+    const reevaluate = vi.fn<(id: string) => Promise<ReevaluationResult>>().mockRejectedValue(
+      new LeadApiError('not_found', 'lead not found', {
+        path: '/api/crm/leads/x',
+        status: 404,
+      }),
+    );
+    const sweeper = new ReevaluationSweeper(BASE, {
+      findCandidates: () => Promise.resolve([candidate()]),
+      reevaluate,
+      now: () => DECIDED + 11 * 60_000,
+    });
+
+    const s1 = await sweeper.runSweep();
+    expect(s1).toMatchObject({ attempted: 1, errors: 1, newlyExhausted: 1 });
+
+    // A permanent failure is not retried on later sweeps (it stays NEEDS_REVIEW).
+    const s2 = await sweeper.runSweep();
+    expect(reevaluate).toHaveBeenCalledTimes(1);
+    expect(s2).toMatchObject({ attempted: 0, exhausted: 1 });
+  });
+
+  it('retries a TRANSIENT error with backoff and exhausts after maxAttempts', async () => {
+    const c = clock(DECIDED);
+    const reevaluate = vi.fn<(id: string) => Promise<ReevaluationResult>>().mockRejectedValue(
+      new LeadApiError('network', 'Lead API request timed out after 10000ms', {
+        path: '/api/crm/persons/x',
+      }),
+    );
+    const sweeper = new ReevaluationSweeper(BASE, {
+      findCandidates: () => Promise.resolve([candidate()]),
+      reevaluate,
+      now: c.now,
+    });
+
+    c.advance(10 * 60_000 + 1000);
+    expect((await sweeper.runSweep()).attempted).toBe(1); // attempt 1
+
+    c.advance(1000);
+    expect((await sweeper.runSweep()).attempted).toBe(0); // backed off (due at +20min)
+
+    c.advance(10 * 60_000);
+    expect((await sweeper.runSweep()).attempted).toBe(1); // attempt 2
+
+    c.advance(20 * 60_000);
+    const third = await sweeper.runSweep();
+    expect(third.attempted).toBe(1); // attempt 3
+    expect(third.newlyExhausted).toBe(1); // hit maxAttempts=3
+
+    c.advance(1000 * 60_000);
+    const after = await sweeper.runSweep();
+    expect(after.attempted).toBe(0);
+    expect(after.exhausted).toBe(1);
+    expect(reevaluate).toHaveBeenCalledTimes(3); // bounded, never forever
+  });
+
+  it('treats a non-LeadApiError as transient (retried, not immediately exhausted)', async () => {
+    const reevaluate = vi
+      .fn<(id: string) => Promise<ReevaluationResult>>()
+      .mockRejectedValue(new Error('socket hang up'));
+    const sweeper = new ReevaluationSweeper(BASE, {
+      findCandidates: () => Promise.resolve([candidate()]),
+      reevaluate,
+      now: () => DECIDED + 11 * 60_000,
+    });
+
+    const s = await sweeper.runSweep();
+    expect(s).toMatchObject({ attempted: 1, errors: 1, newlyExhausted: 0 }); // one attempt < cap
   });
 
   it('re-evaluates only the explicit re-evaluable reasons (delegated to the query filter)', async () => {

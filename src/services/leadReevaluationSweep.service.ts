@@ -1,6 +1,7 @@
 import { env, type Env } from '../config/env.js';
 import { logger } from '../lib/logger.js';
 import { LeadApiClient } from '../integrations/leadApi/client.js';
+import { LeadApiError, describeLeadApiError } from '../integrations/leadApi/errors.js';
 import {
   findReevaluableLeads,
   type ReevaluableLead,
@@ -142,14 +143,38 @@ export class ReevaluationSweeper {
       try {
         result = await this.reevaluate(candidate.leadId);
       } catch (error) {
-        // A transient Lead API failure must not abort the whole sweep; the lead
-        // is retried on a future sweep (this attempt is not counted against its
-        // budget, so a flaky API never exhausts a lead prematurely).
+        // A failure must never abort the whole sweep. How we schedule a retry
+        // depends on whether the failure can plausibly recover:
+        //
+        //   - PERMANENT (auth / not-found / other 4xx / contract): retrying can
+        //     never help, so stop re-attempting this lead for the process
+        //     lifetime. It stays NEEDS_REVIEW (recoverable on restart or by hand)
+        //     — never marked terminal/SKIPPED on a mere fetch failure — and no
+        //     longer consumes the per-cycle budget, so it can't starve other leads.
+        //   - TRANSIENT (network / timeout / 5xx / rate-limit): may recover, so
+        //     count it against the bounded attempt budget. Subsequent retries back
+        //     off (dueAt grows with attempts) and eventually exhaust at
+        //     `maxAttempts`, instead of re-hitting the same lead every sweep.
         summary.errors += 1;
-        logger.warn(
-          { leadId: candidate.leadId, err: error instanceof Error ? error.name : undefined },
-          'reevaluation sweep: lead re-evaluation failed; will retry on a later sweep',
-        );
+        const safe =
+          error instanceof LeadApiError
+            ? describeLeadApiError(error)
+            : { kind: 'unknown', err: error instanceof Error ? error.name : 'unknown' };
+        const permanent = error instanceof LeadApiError && error.permanent;
+
+        if (permanent) {
+          this.markExhausted(candidate.leadId, summary);
+          logger.warn(
+            { leadId: candidate.leadId, reason: candidate.decisionReason, ...safe },
+            'reevaluation sweep: permanent Lead API error; not retrying this lead',
+          );
+        } else {
+          const exhausted = this.bumpAttempt(candidate.leadId, summary);
+          logger.warn(
+            { leadId: candidate.leadId, reason: candidate.decisionReason, exhausted, ...safe },
+            'reevaluation sweep: transient Lead API error; will retry with backoff',
+          );
+        }
         continue;
       }
 
@@ -197,7 +222,7 @@ export class ReevaluationSweeper {
     }
   }
 
-  private bumpAttempt(leadId: string, summary: SweepSummary): void {
+  private bumpAttempt(leadId: string, summary: SweepSummary): boolean {
     const attempts = (this.state.get(leadId)?.attempts ?? 0) + 1;
     const exhausted = attempts >= this.config.maxAttempts;
     this.state.set(leadId, { attempts, exhausted });
@@ -208,6 +233,18 @@ export class ReevaluationSweeper {
         'reevaluation sweep: lead exhausted its retry budget; leaving it NEEDS_REVIEW',
       );
     }
+    return exhausted;
+  }
+
+  /**
+   * Marks a lead as no longer retryable this process lifetime (a permanent
+   * error). It keeps whatever attempt count it had, is skipped on later sweeps by
+   * the `exhausted` guard, and is never marked terminal in the database.
+   */
+  private markExhausted(leadId: string, summary: SweepSummary): void {
+    const prev = this.state.get(leadId);
+    if (!prev?.exhausted) summary.newlyExhausted += 1;
+    this.state.set(leadId, { attempts: prev?.attempts ?? 0, exhausted: true });
   }
 }
 

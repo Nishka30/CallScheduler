@@ -4,7 +4,7 @@ import { logger } from '../lib/logger.js';
 import { LeadApiClient } from '../integrations/leadApi/client.js';
 import { LeadApiError } from '../integrations/leadApi/errors.js';
 import { RetellClient } from '../integrations/retell/client.js';
-import { RetellApiError } from '../integrations/retell/errors.js';
+import { RetellApiError, describeRetellError } from '../integrations/retell/errors.js';
 import type { LeadDetail, LeadListRow } from '../integrations/leadApi/schemas.js';
 import { evaluateListEligibility, readPhoneVerdict } from './leadEligibility.service.js';
 import { evaluateCrmGate } from './crmGate.service.js';
@@ -285,18 +285,23 @@ async function handleDialFailure(
   processingVersion: number,
   error: unknown,
 ): Promise<OrchestratorResult> {
+  const safe = error instanceof RetellApiError ? describeRetellError(error) : { kind: 'unknown' };
+
   if (error instanceof RetellApiError && error.uncertain) {
     logger.error(
-      { leadId, callRecordId, kind: error.kind },
+      { leadId, callRecordId, ...safe },
       'call orchestrator: UNCERTAIN provider result; leaving CALLING for reconciliation',
     );
     return { outcome: 'provider_uncertain', leadId, callRecordId, reason: error.kind };
   }
 
-  // Definitely not dialled: safe to finalise as FAILED.
+  // Definitely not dialled (pre-flight refusal or a 4xx the provider rejected):
+  // safe to finalise as FAILED. We do NOT open another attempt or retry — a
+  // confirmed pre-dial rejection is terminal and awaits an explicit retry
+  // decision, exactly like any other FAILED lead.
   await completeProcessing(processingId, processingVersion, ProcessingStatus.FAILED, error);
   logger.error(
-    { leadId, callRecordId, kind: error instanceof RetellApiError ? error.kind : 'unknown' },
+    { leadId, callRecordId, ...safe },
     'call orchestrator: provider refused before dialling; marked FAILED',
   );
   return {
