@@ -166,6 +166,24 @@ export async function initiateCallForLead(
   }
   logger.debug(describeContextForLog(context), 'call orchestrator: context prepared');
 
+  // 6b. Re-check the caller hold immediately before committing to a call. The
+  //     step-5 hold check can be seconds stale by now — fetching person history
+  //     above is a network call that can take time — so a hold that lapsed in the
+  //     gap must not be dialled. Re-uses the already-fresh `caller_hold_until` with
+  //     the current clock (no new fetch), and returns BEFORE any claim or attempt,
+  //     so the lead is left untouched (never stuck mid-call) and is not retried.
+  if (!isHoldActive(evaluateCallWindow(holdRaw, now()))) {
+    logger.info(
+      { leadId },
+      'call orchestrator: caller hold lapsed before dialling; not placing a call',
+    );
+    return {
+      outcome: 'rejected_hold_expired',
+      leadId,
+      reason: 'caller hold lapsed before dialling',
+    };
+  }
+
   // 7. Claim the ELIGIBLE lead atomically (serialises workers).
   const claimed = await claimEligibleLead(leadId, workerId, now());
   if (!claimed) {

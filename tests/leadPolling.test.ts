@@ -154,6 +154,27 @@ describe('bootstrap run', () => {
     ]);
   });
 
+  it('first poll starts from the configured go-live watermark (LEAD_POLL_INITIAL_SINCE), and pre-go-live leads are never called', async () => {
+    // db.cursor is null → bootstrap run with no durable watermark, so the
+    // configured go-live timestamp seeds `since` (not midnight, not an implicit now).
+    const client = fakeClient([{ rows: [row('1'), row('2')], nextCursor: null }]);
+
+    const summary = await runLeadPoll({
+      client,
+      config: config({ LEAD_POLL_INITIAL_SINCE: '2026-10-28T16:30:00Z' }),
+    });
+
+    const first = client.listLeads.mock.calls[0]![0] as Record<string, unknown>;
+    expect(first['since']).toBe('2026-10-28T16:30:00.000Z');
+    // The two leads present at go-live are recorded as pre-existing and never called.
+    expect(summary.bootstrap).toBe(true);
+    expect(summary.callsConsidered).toBe(0);
+    expect([...db.leads.values()].map((l) => l.decisionReason)).toEqual([
+      'known_before_bootstrap',
+      'known_before_bootstrap',
+    ]);
+  });
+
   it('marks bootstrap complete so the next run evaluates leads normally', async () => {
     await runLeadPoll({
       client: fakeClient([{ rows: [row('1')], nextCursor: null }]),

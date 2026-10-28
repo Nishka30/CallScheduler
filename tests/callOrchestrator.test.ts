@@ -199,6 +199,35 @@ describe('initiateCallForLead — read-only validation gates', () => {
     const deps = fakeClients(detail({ caller_hold_until: null }));
     expect((await initiateCallForLead('lead-1', deps)).outcome).toBe('rejected_hold_expired');
   });
+
+  it('re-checks the hold before dialling: a hold that lapses during the person fetch is not called', async () => {
+    // Hold is active at the first check, then the person-history fetch "takes
+    // time" and the hold expires before we commit to the call.
+    let clock = new Date('2026-10-16T12:00:00.000Z');
+    const deps = fakeClients(detail({ caller_hold_until: '2026-10-16T12:01:00.000Z' }));
+    deps.now = () => clock;
+    deps.leadApiClient.getPerson = vi.fn().mockImplementation(() => {
+      clock = new Date('2026-10-16T12:02:00.000Z'); // now past the 12:01 hold
+      return Promise.resolve({ profile: {}, leads: [] });
+    });
+
+    const result = await initiateCallForLead('lead-1', deps);
+
+    expect(result.outcome).toBe('rejected_hold_expired');
+    // Returned before any state change: not claimed, not dialled, nothing to reconcile.
+    expect(claimEligibleLead).not.toHaveBeenCalled();
+    expect(markCalling).not.toHaveBeenCalled();
+    expect(recordCallAttempt).not.toHaveBeenCalled();
+    expect(deps.retellClient.createPhoneCall).not.toHaveBeenCalled();
+  });
+
+  it('still dials when the hold remains active through the person fetch', async () => {
+    // Control: a hold comfortably in the future is unaffected by the re-check.
+    const deps = fakeClients(detail({ caller_hold_until: FUTURE_HOLD }));
+    const result = await initiateCallForLead('lead-1', deps);
+    expect(result.outcome).toBe('call_initiated');
+    expect(deps.retellClient.createPhoneCall).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('initiateCallForLead — claim and duplicate guards', () => {
