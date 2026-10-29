@@ -10,6 +10,7 @@ const callRecord = {
   findFirst: vi.fn(),
   findUnique: vi.fn(),
   findUniqueOrThrow: vi.fn(),
+  findMany: vi.fn(),
   create: vi.fn(),
   update: vi.fn(),
   updateMany: vi.fn(),
@@ -41,6 +42,8 @@ const {
   recordCallResult,
   computeSafeCallUpdate,
   applyWebhookCallEvent,
+  listCallRecords,
+  getCallRecordDetail,
 } = await import('../src/repositories/callRecord.repository.js');
 
 function row(overrides: Record<string, unknown> = {}): Record<string, unknown> {
@@ -309,6 +312,12 @@ describe('computeSafeCallUpdate (pure terminal-safe merge)', () => {
     disconnectionReason: null,
     direction: null,
     customerTz: null,
+    agentId: null,
+    agentVersion: null,
+    transcriptWithToolCalls: null,
+    recordingMultiChannelUrl: null,
+    publicLogUrl: null,
+    providerMetadata: null,
   };
 
   it('advances a non-terminal status forward', () => {
@@ -449,5 +458,61 @@ describe('applyWebhookCallEvent', () => {
     expect(result.matched).toBe(true);
     expect(result.changed).toBe(false);
     expect(callRecord.update).not.toHaveBeenCalled();
+  });
+});
+
+describe('listCallRecords (read API)', () => {
+  it('applies filters, orders newest-first, and sets nextCursor when a further page exists', async () => {
+    // limit 2 → fetch 3; a 3rd row means there is a next page.
+    callRecord.findMany.mockResolvedValue([{ id: 'c1' }, { id: 'c2' }, { id: 'c3' }]);
+
+    const page = await listCallRecords(
+      { leadId: 'lead-1', status: CallStatus.COMPLETED },
+      { limit: 2 },
+    );
+
+    expect(page.items.map((i) => i.id)).toEqual(['c1', 'c2']);
+    expect(page.nextCursor).toBe('c2');
+    const arg = callRecord.findMany.mock.calls[0]![0] as {
+      where: Record<string, unknown>;
+      take: number;
+      select: Record<string, unknown>;
+    };
+    expect(arg.where).toMatchObject({ leadId: 'lead-1', status: CallStatus.COMPLETED });
+    expect(arg.take).toBe(3);
+    // The list projection must NOT include heavy/sensitive fields.
+    expect(arg.select).not.toHaveProperty('transcript');
+    expect(arg.select).not.toHaveProperty('analysis');
+    expect(arg.select).not.toHaveProperty('providerMetadata');
+  });
+
+  it('returns a null cursor on the last page', async () => {
+    callRecord.findMany.mockResolvedValue([{ id: 'c1' }]);
+    const page = await listCallRecords({}, { limit: 25 });
+    expect(page.nextCursor).toBeNull();
+    expect(page.items).toHaveLength(1);
+  });
+});
+
+describe('getCallRecordDetail (read API)', () => {
+  it('looks up by internal UUID', async () => {
+    callRecord.findUnique.mockResolvedValue(row({ id: 'aa000000-0000-4000-8000-000000000001' }));
+    const r = await getCallRecordDetail('aa000000-0000-4000-8000-000000000001');
+    expect(r).not.toBeNull();
+    expect(callRecord.findUnique).toHaveBeenCalledWith({
+      where: { id: 'aa000000-0000-4000-8000-000000000001' },
+    });
+  });
+
+  it('falls back to the Retell call id for a non-UUID lookup', async () => {
+    callRecord.findUnique.mockResolvedValue(row({ retellCallId: 'call_abc' }));
+    const r = await getCallRecordDetail('call_abc');
+    expect(r).not.toBeNull();
+    expect(callRecord.findUnique).toHaveBeenCalledWith({ where: { retellCallId: 'call_abc' } });
+  });
+
+  it('returns null when nothing matches', async () => {
+    callRecord.findUnique.mockResolvedValue(null);
+    expect(await getCallRecordDetail('call_missing')).toBeNull();
   });
 });

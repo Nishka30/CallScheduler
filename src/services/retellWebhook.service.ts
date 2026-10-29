@@ -119,6 +119,21 @@ export async function processRetellWebhook(input: ProcessWebhookInput): Promise<
     update.disconnectionReason = call.disconnection_reason;
   }
   if (typeof call.direction === 'string') update.direction = call.direction;
+  // Agent identity/version, extra recording/log URLs, tool-call transcript.
+  if (typeof call.agent_id === 'string') update.agentId = call.agent_id;
+  if (typeof call.agent_version === 'number') update.agentVersion = call.agent_version;
+  if (call.transcript_with_tool_calls) {
+    update.transcriptWithToolCalls = asJson(call.transcript_with_tool_calls);
+  }
+  if (typeof call.recording_multi_channel_url === 'string' && call.recording_multi_channel_url) {
+    update.recordingMultiChannelUrl = call.recording_multi_channel_url;
+  }
+  if (typeof call.public_log_url === 'string' && call.public_log_url) {
+    update.publicLogUrl = call.public_log_url;
+  }
+  // Curated, non-PII diagnostics only (cost/latency/type) — never phone numbers.
+  const metrics = buildProviderMetadata(call);
+  if (metrics) update.providerMetadata = asJson(metrics);
 
   const result = await applyWebhookCallEvent(call.call_id, update);
 
@@ -153,6 +168,23 @@ export async function processRetellWebhook(input: ProcessWebhookInput): Promise<
 /** JSON-safe clone, so a structured payload is always a valid Prisma JSON value. */
 function asJson(value: unknown): Prisma.InputJsonValue {
   return JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
+}
+
+/**
+ * Collects the non-PII diagnostics worth retaining (cost, latency, call type) into
+ * one object, or undefined when none are present. Deliberately excludes phone
+ * numbers and any other sensitive fields — only these curated metrics are stored.
+ */
+function buildProviderMetadata(call: {
+  call_cost?: Record<string, unknown> | null | undefined;
+  latency?: Record<string, unknown> | null | undefined;
+  call_type?: string | null | undefined;
+}): Record<string, unknown> | undefined {
+  const metrics: Record<string, unknown> = {};
+  if (call.call_cost) metrics['call_cost'] = call.call_cost;
+  if (call.latency) metrics['latency'] = call.latency;
+  if (typeof call.call_type === 'string') metrics['call_type'] = call.call_type;
+  return Object.keys(metrics).length > 0 ? metrics : undefined;
 }
 
 /**

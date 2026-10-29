@@ -49,6 +49,13 @@ const envSchema = z.object({
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
 
   /**
+   * Bearer key for the authenticated call-history read API (`GET /api/calls*`).
+   * Optional: when unset the read API FAILS CLOSED (503) so call transcripts and
+   * other call detail are never exposed without a configured credential.
+   */
+  CALL_READ_API_KEY: optionalString(),
+
+  /**
    * The only supported way to configure the database. Must be a postgres URL;
    * the value itself is never logged.
    */

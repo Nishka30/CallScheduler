@@ -37,6 +37,7 @@ const callObjectSchema = z
     call_status: z.string().nullish(),
     disconnection_reason: z.string().nullish(),
     direction: z.string().nullish(),
+    call_type: z.string().nullish(),
     start_timestamp: z.number().int().nonnegative().nullish(),
     end_timestamp: z.number().int().nonnegative().nullish(),
     call_analysis: callAnalysisSchema.nullish(),
@@ -44,8 +45,19 @@ const callObjectSchema = z
     transcript: z.string().nullish(),
     /** Speaker-labelled utterances with word timings; preserved structurally. */
     transcript_object: z.array(z.unknown()).nullish(),
-    /** Recording URL, when Retell produced one and it is configured to be shared. */
+    /** Transcript including tool-call steps (e.g. booking tool invocations). */
+    transcript_with_tool_calls: z.array(z.unknown()).nullish(),
+    /** Recording URL(s), when Retell produced them and sharing is configured. */
     recording_url: z.string().nullish(),
+    recording_multi_channel_url: z.string().nullish(),
+    /** Provider public log URL for diagnosing a call. */
+    public_log_url: z.string().nullish(),
+    /** Agent identity/version that handled the call. */
+    agent_id: z.string().nullish(),
+    agent_version: z.number().int().nullish(),
+    /** Non-PII diagnostics; captured into providerMetadata. */
+    call_cost: z.record(z.unknown()).nullish(),
+    latency: z.record(z.unknown()).nullish(),
   })
   .passthrough();
 

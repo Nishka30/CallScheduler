@@ -163,6 +163,26 @@ model CallRecord {
   /// Customer timezone associated with the call, when known.
   customerTz String? @db.VarChar(64)
 
+  /// Retell agent id and version that handled the call (audit / regression tracing).
+  agentId      String? @db.VarChar(128)
+  agentVersion Int?
+
+  /// Richer structured transcript including tool-call steps (e.g. booking tool
+  /// invocations) when Retell supplies `transcript_with_tool_calls`. jsonb.
+  transcriptWithToolCalls Json?
+
+  /// Additional recording variants, when supplied. URLs only, never audio bytes.
+  recordingMultiChannelUrl String? @db.VarChar(1024)
+
+  /// Provider public log URL for diagnosing a call, when supplied.
+  publicLogUrl String? @db.VarChar(1024)
+
+  /// Curated non-PII provider diagnostics (cost + latency + call type). A JSONB
+  /// catch-all so these metrics are retained without a column per metric; the full
+  /// conversation is already in transcript/transcriptJson/analysis. Phone numbers
+  /// and secrets are deliberately NOT stored here.
+  providerMetadata Json?
+
   // --- CRM note delivery tracking (independent of the call result above) ---
 
   /// pending | sent | failed | skipped. Null until a terminal outcome needs a note.

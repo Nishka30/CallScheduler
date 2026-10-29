@@ -286,6 +286,12 @@ export interface WebhookCallUpdate {
   disconnectionReason?: string;
   direction?: string;
   customerTz?: string;
+  agentId?: string;
+  agentVersion?: number;
+  transcriptWithToolCalls?: Prisma.InputJsonValue;
+  recordingMultiChannelUrl?: string;
+  publicLogUrl?: string;
+  providerMetadata?: Prisma.InputJsonValue;
 }
 
 type ExistingCallFields = Pick<
@@ -302,6 +308,12 @@ type ExistingCallFields = Pick<
   | 'disconnectionReason'
   | 'direction'
   | 'customerTz'
+  | 'agentId'
+  | 'agentVersion'
+  | 'transcriptWithToolCalls'
+  | 'recordingMultiChannelUrl'
+  | 'publicLogUrl'
+  | 'providerMetadata'
 >;
 
 /**
@@ -387,6 +399,34 @@ export function computeSafeCallUpdate(
   }
   if (incoming.customerTz !== undefined && existing.customerTz === null) {
     data.customerTz = incoming.customerTz;
+  }
+  if (incoming.agentId !== undefined && existing.agentId === null) {
+    data.agentId = incoming.agentId;
+  }
+  if (incoming.agentVersion !== undefined && existing.agentVersion === null) {
+    data.agentVersion = incoming.agentVersion;
+  }
+  if (incoming.transcriptWithToolCalls !== undefined && existing.transcriptWithToolCalls === null) {
+    data.transcriptWithToolCalls = incoming.transcriptWithToolCalls;
+  }
+  if (
+    incoming.recordingMultiChannelUrl !== undefined &&
+    incoming.recordingMultiChannelUrl.length > 0 &&
+    existing.recordingMultiChannelUrl === null
+  ) {
+    data.recordingMultiChannelUrl = incoming.recordingMultiChannelUrl;
+  }
+  if (
+    incoming.publicLogUrl !== undefined &&
+    incoming.publicLogUrl.length > 0 &&
+    existing.publicLogUrl === null
+  ) {
+    data.publicLogUrl = incoming.publicLogUrl;
+  }
+  // Metrics can be refined by a later event (e.g. final cost on call_analyzed),
+  // so overwrite when a newer non-empty value arrives.
+  if (incoming.providerMetadata !== undefined) {
+    data.providerMetadata = incoming.providerMetadata;
   }
 
   return data;
@@ -501,6 +541,86 @@ export async function findCallsWithUndeliveredNotes(limit: number): Promise<Call
     orderBy: { endedAt: 'asc' },
     take: limit,
   });
+}
+
+// ---------------------------------------------------------------------------
+// Read access for the authenticated call-history API
+// ---------------------------------------------------------------------------
+
+export interface CallListFilter {
+  leadId?: string;
+  status?: CallStatus;
+  outcome?: CallOutcome;
+  /** Only calls created at/after this instant. */
+  since?: Date;
+}
+
+/**
+ * Summary columns for the list endpoint — deliberately EXCLUDES the heavy/sensitive
+ * fields (transcript, transcriptJson, analysis, providerMetadata), which the detail
+ * endpoint returns. `call_records` holds no phone numbers, so no contact PII here.
+ */
+const CALL_LIST_SELECT = {
+  id: true,
+  leadId: true,
+  personKey: true,
+  retellCallId: true,
+  status: true,
+  outcome: true,
+  direction: true,
+  disconnectionReason: true,
+  startedAt: true,
+  endedAt: true,
+  summary: true,
+  recordingUrl: true,
+  noteStatus: true,
+  createdAt: true,
+  updatedAt: true,
+} satisfies Prisma.CallRecordSelect;
+
+export type CallListItem = Prisma.CallRecordGetPayload<{ select: typeof CALL_LIST_SELECT }>;
+
+export interface CallListPage {
+  items: CallListItem[];
+  /** Opaque cursor (a call id) for the next page, or null when there are no more. */
+  nextCursor: string | null;
+}
+
+/** Paginated, filtered call history (newest first). */
+export async function listCallRecords(
+  filter: CallListFilter,
+  pagination: { limit: number; cursor?: string },
+): Promise<CallListPage> {
+  const where: Prisma.CallRecordWhereInput = {
+    ...(filter.leadId ? { leadId: filter.leadId } : {}),
+    ...(filter.status ? { status: filter.status } : {}),
+    ...(filter.outcome ? { outcome: filter.outcome } : {}),
+    ...(filter.since ? { createdAt: { gte: filter.since } } : {}),
+  };
+
+  // Fetch one extra row to learn whether a further page exists.
+  const rows = await prisma.callRecord.findMany({
+    where,
+    select: CALL_LIST_SELECT,
+    orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+    take: pagination.limit + 1,
+    ...(pagination.cursor ? { cursor: { id: pagination.cursor }, skip: 1 } : {}),
+  });
+
+  const items = rows.slice(0, pagination.limit);
+  const nextCursor = rows.length > pagination.limit ? (items[items.length - 1]?.id ?? null) : null;
+  return { items, nextCursor };
+}
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** Full call detail by internal id (UUID) or by Retell call id. Null when not found. */
+export async function getCallRecordDetail(idOrRetellCallId: string): Promise<CallRecord | null> {
+  if (UUID_RE.test(idOrRetellCallId)) {
+    const byId = await prisma.callRecord.findUnique({ where: { id: idOrRetellCallId } });
+    if (byId) return byId;
+  }
+  return prisma.callRecord.findUnique({ where: { retellCallId: idOrRetellCallId } });
 }
 
 /** Marks a never-dialled attempt as FAILED by its id (no provider call id exists). */

@@ -339,6 +339,48 @@ describe('processRetellWebhook — full record capture & CRM note delivery', () 
     expect(update.direction).toBe('outbound');
   });
 
+  it('captures agent identity, extra URLs, tool-call transcript and curated diagnostics', async () => {
+    applyWebhookCallEvent.mockResolvedValue({
+      matched: true,
+      changed: true,
+      record: { leadId: 'lead-1', status: CallStatus.COMPLETED },
+    });
+
+    await run(
+      analyzed({
+        agent_id: 'agent_123',
+        agent_version: 7,
+        recording_multi_channel_url: 'https://rec.example/multi.wav',
+        public_log_url: 'https://log.example/call_1',
+        transcript_with_tool_calls: [
+          { role: 'agent', tool_calls: [{ name: 'book_consultation' }] },
+        ],
+        call_type: 'phone_call',
+        call_cost: { combined_cost: 1234 },
+        latency: { e2e: { p50: 800 } },
+        // PII that must NOT be persisted into providerMetadata:
+        from_number: '+10000000000',
+        to_number: '+19999999999',
+      }),
+    );
+
+    const [, update] = applyWebhookCallEvent.mock.calls[0]!;
+    expect(update.agentId).toBe('agent_123');
+    expect(update.agentVersion).toBe(7);
+    expect(update.recordingMultiChannelUrl).toBe('https://rec.example/multi.wav');
+    expect(update.publicLogUrl).toBe('https://log.example/call_1');
+    expect(update.transcriptWithToolCalls).toEqual([
+      { role: 'agent', tool_calls: [{ name: 'book_consultation' }] },
+    ]);
+    expect(update.providerMetadata).toMatchObject({
+      call_cost: { combined_cost: 1234 },
+      latency: { e2e: { p50: 800 } },
+      call_type: 'phone_call',
+    });
+    // Phone numbers are never folded into providerMetadata.
+    expect(JSON.stringify(update.providerMetadata)).not.toContain('9999999999');
+  });
+
   it('delivers the CRM note on call_analyzed for a completed call', async () => {
     applyWebhookCallEvent.mockResolvedValue({
       matched: true,
