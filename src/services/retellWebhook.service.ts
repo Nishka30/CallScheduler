@@ -1,4 +1,4 @@
-import { CallStatus, type CallRecord } from '@prisma/client';
+import { CallStatus, type Prisma, type CallRecord } from '@prisma/client';
 import { logger } from '../lib/logger.js';
 import { verifyRetellSignature } from '../integrations/retell/webhookVerify.js';
 import {
@@ -11,6 +11,7 @@ import {
   type WebhookCallUpdate,
 } from '../repositories/callRecord.repository.js';
 import { completeCallingLead } from '../repositories/leadProcessing.repository.js';
+import { deliverCallNote } from './callNoteDelivery.service.js';
 
 /** Call statuses that mean the attempt is finished (telephony-terminal). */
 const TERMINAL_CALL_STATUSES: ReadonlySet<CallStatus> = new Set([
@@ -103,6 +104,21 @@ export async function processRetellWebhook(input: ProcessWebhookInput): Promise<
   if (typeof summary === 'string' && summary.length > 0) update.summary = summary;
   if (typeof call.start_timestamp === 'number') update.startedAt = new Date(call.start_timestamp);
   if (typeof call.end_timestamp === 'number') update.endedAt = new Date(call.end_timestamp);
+  // Full call record: transcript, structured transcript/analysis, recording URL and
+  // provider metadata. The repository merge keeps the fuller/earliest safe value,
+  // so a late or duplicate webhook never clobbers better data.
+  if (typeof call.transcript === 'string' && call.transcript.length > 0) {
+    update.transcript = call.transcript;
+  }
+  if (call.transcript_object) update.transcriptJson = asJson(call.transcript_object);
+  if (call.call_analysis) update.analysis = asJson(call.call_analysis);
+  if (typeof call.recording_url === 'string' && call.recording_url.length > 0) {
+    update.recordingUrl = call.recording_url;
+  }
+  if (typeof call.disconnection_reason === 'string') {
+    update.disconnectionReason = call.disconnection_reason;
+  }
+  if (typeof call.direction === 'string') update.direction = call.direction;
 
   const result = await applyWebhookCallEvent(call.call_id, update);
 
@@ -122,11 +138,52 @@ export async function processRetellWebhook(input: ProcessWebhookInput): Promise<
   // late terminal event is a safe, status-guarded no-op.
   await completeLeadIfCallTerminal(result.record, call.call_id);
 
+  // Record the call in the CRM (a note for EVERY outcome), once. Secondary to the
+  // local record: it never fails the webhook, and the local record is already
+  // persisted, so a CRM note failure never loses data.
+  await deliverCallNoteIfTerminal(event.event, result.record);
+
   logger.info(
     { event: event.event, callId: call.call_id, changed: result.changed },
     'retell webhook applied',
   );
   return { status: 'processed', event: event.event, callId: call.call_id, changed: result.changed };
+}
+
+/** JSON-safe clone, so a structured payload is always a valid Prisma JSON value. */
+function asJson(value: unknown): Prisma.InputJsonValue {
+  return JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
+}
+
+/**
+ * Delivers the CRM call note once the call is terminal, exactly once.
+ *
+ * Timing: a completed conversation's transcript/analysis arrives on
+ * `call_analyzed`, so for a COMPLETED call we wait for that event; for a
+ * non-conversation terminal outcome (no answer / busy / failed / canceled) no
+ * analysis is expected, so we deliver on `call_ended`. `deliverCallNote` itself is
+ * single-shot, status-tracked and never throws, and skips a record already sent.
+ */
+async function deliverCallNoteIfTerminal(
+  eventName: string,
+  record: CallRecord | undefined,
+): Promise<void> {
+  if (!record || !TERMINAL_CALL_STATUSES.has(record.status) || record.noteStatus === 'sent') return;
+  const waitsForAnalysis = record.status === CallStatus.COMPLETED;
+  if (waitsForAnalysis && eventName !== 'call_analyzed') return;
+
+  try {
+    await deliverCallNote(record);
+  } catch (error) {
+    logger.error(
+      {
+        callId: record.retellCallId,
+        leadId: record.leadId,
+        err: error instanceof Error ? error.name : 'unknown',
+      },
+      'CRM call-note delivery raised unexpectedly; webhook still acknowledged',
+    );
+  }
 }
 
 async function completeLeadIfCallTerminal(

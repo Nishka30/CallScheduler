@@ -278,11 +278,30 @@ export interface WebhookCallUpdate {
   summary?: string;
   startedAt?: Date;
   endedAt?: Date;
+  /** Full transcript text; the fuller version wins (a late `call_analyzed` fills it in). */
+  transcript?: string;
+  transcriptJson?: Prisma.InputJsonValue;
+  analysis?: Prisma.InputJsonValue;
+  recordingUrl?: string;
+  disconnectionReason?: string;
+  direction?: string;
+  customerTz?: string;
 }
 
 type ExistingCallFields = Pick<
   CallRecord,
-  'status' | 'outcome' | 'summary' | 'startedAt' | 'endedAt'
+  | 'status'
+  | 'outcome'
+  | 'summary'
+  | 'startedAt'
+  | 'endedAt'
+  | 'transcript'
+  | 'transcriptJson'
+  | 'analysis'
+  | 'recordingUrl'
+  | 'disconnectionReason'
+  | 'direction'
+  | 'customerTz'
 >;
 
 /**
@@ -334,6 +353,42 @@ export function computeSafeCallUpdate(
     data.endedAt = incoming.endedAt;
   }
 
+  // Transcript: keep the FULLER text, so a late `call_analyzed` fills in (or
+  // upgrades) a partial transcript, while an out-of-order/stale shorter one never
+  // overwrites a better one.
+  if (
+    incoming.transcript !== undefined &&
+    incoming.transcript.length > 0 &&
+    (existing.transcript === null || incoming.transcript.length > existing.transcript.length)
+  ) {
+    data.transcript = incoming.transcript;
+  }
+
+  // Structured payloads and provider metadata: write once, when still empty, so a
+  // redelivery never clobbers captured data.
+  if (incoming.transcriptJson !== undefined && existing.transcriptJson === null) {
+    data.transcriptJson = incoming.transcriptJson;
+  }
+  if (incoming.analysis !== undefined && existing.analysis === null) {
+    data.analysis = incoming.analysis;
+  }
+  if (
+    incoming.recordingUrl !== undefined &&
+    incoming.recordingUrl.length > 0 &&
+    existing.recordingUrl === null
+  ) {
+    data.recordingUrl = incoming.recordingUrl;
+  }
+  if (incoming.disconnectionReason !== undefined && existing.disconnectionReason === null) {
+    data.disconnectionReason = incoming.disconnectionReason;
+  }
+  if (incoming.direction !== undefined && existing.direction === null) {
+    data.direction = incoming.direction;
+  }
+  if (incoming.customerTz !== undefined && existing.customerTz === null) {
+    data.customerTz = incoming.customerTz;
+  }
+
   return data;
 }
 
@@ -374,5 +429,92 @@ export async function applyWebhookCallEvent(
 
     const record = await tx.callRecord.update({ where: { id: existing.id }, data });
     return { matched: true, changed: true, record };
+  });
+}
+
+// ---------------------------------------------------------------------------
+// CRM note delivery tracking (independent of the call result above)
+//
+// A note is delivered at most once per call (guarded by `noteStatus === 'sent'`).
+// These writers only touch the note-* columns, so they never disturb the call
+// result, the transcript, or the booking. A note failure is recorded, never
+// thrown, so it can never roll back a persisted call record or booking.
+// ---------------------------------------------------------------------------
+
+/** Marks the lead's CRM call-note as delivered. */
+export async function markCallNoteDelivered(
+  callRecordId: string,
+  now: Date = new Date(),
+): Promise<void> {
+  await prisma.callRecord.update({
+    where: { id: callRecordId },
+    data: {
+      noteStatus: 'sent',
+      noteError: null,
+      noteAttempts: { increment: 1 },
+      noteLastAttemptAt: now,
+      noteDeliveredAt: now,
+    },
+  });
+}
+
+/** Records a failed CRM call-note attempt with a short, sanitized category. */
+export async function markCallNoteFailed(
+  callRecordId: string,
+  errorCategory: string,
+  now: Date = new Date(),
+): Promise<void> {
+  await prisma.callRecord.update({
+    where: { id: callRecordId },
+    data: {
+      noteStatus: 'failed',
+      noteError: errorCategory.slice(0, 200),
+      noteAttempts: { increment: 1 },
+      noteLastAttemptAt: now,
+    },
+  });
+}
+
+/** Marks that no CRM note is needed/possible for this call (e.g. no outcome). */
+export async function markCallNoteSkipped(
+  callRecordId: string,
+  reason: string,
+  now: Date = new Date(),
+): Promise<void> {
+  await prisma.callRecord.update({
+    where: { id: callRecordId },
+    data: { noteStatus: 'skipped', noteError: reason.slice(0, 200), noteLastAttemptAt: now },
+  });
+}
+
+/**
+ * Terminal call records whose CRM note has not been delivered, for a future
+ * reconciliation/retry. Only rows that reached a terminal call status and whose
+ * note is `failed` or not yet attempted are returned, oldest first.
+ */
+export async function findCallsWithUndeliveredNotes(limit: number): Promise<CallRecord[]> {
+  return prisma.callRecord.findMany({
+    where: {
+      status: { in: [...TERMINAL_STATUSES] },
+      OR: [{ noteStatus: null }, { noteStatus: 'failed' }],
+    },
+    orderBy: { endedAt: 'asc' },
+    take: limit,
+  });
+}
+
+/** Marks a never-dialled attempt as FAILED by its id (no provider call id exists). */
+export async function markCallAttemptFailed(
+  callRecordId: string,
+  disconnectionReason: string,
+  now: Date = new Date(),
+): Promise<CallRecord> {
+  return prisma.callRecord.update({
+    where: { id: callRecordId },
+    data: {
+      status: CallStatus.FAILED,
+      disconnectionReason: disconnectionReason.slice(0, 64),
+      endedAt: now,
+    },
   });
 }

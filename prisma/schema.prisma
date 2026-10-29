@@ -136,12 +136,57 @@ model CallRecord {
   startedAt DateTime? @db.Timestamptz(3)
   endedAt   DateTime? @db.Timestamptz(3)
 
+  // --- Full call record (captured from the final Retell webhooks) ---
+
+  /// Full conversation transcript (plain text), NEVER truncated. Null when the
+  /// provider supplied none (e.g. no-answer / busy).
+  transcript String? @db.Text
+
+  /// Structured transcript (speaker-labelled utterances with word timings) as the
+  /// provider returned it, when available. jsonb.
+  transcriptJson Json?
+
+  /// Structured Retell call analysis (summary, sentiment, custom data), when
+  /// available. jsonb.
+  analysis Json?
+
+  /// Provider recording URL, when supplied and sharing is permitted. URL + metadata
+  /// only — never audio bytes.
+  recordingUrl String? @db.VarChar(1024)
+
+  /// Provider disconnection reason (e.g. dial_no_answer, user_hangup), when available.
+  disconnectionReason String? @db.VarChar(64)
+
+  /// Call direction (the AI caller is outbound). Null until known.
+  direction String? @db.VarChar(16)
+
+  /// Customer timezone associated with the call, when known.
+  customerTz String? @db.VarChar(64)
+
+  // --- CRM note delivery tracking (independent of the call result above) ---
+
+  /// pending | sent | failed | skipped. Null until a terminal outcome needs a note.
+  noteStatus String? @db.VarChar(16)
+
+  /// Sanitized failure category for the last note attempt (never a raw body/PII).
+  noteError String? @db.VarChar(200)
+
+  /// How many times CRM note delivery has been attempted.
+  noteAttempts Int @default(0)
+
+  /// When CRM note delivery was last attempted.
+  noteLastAttemptAt DateTime? @db.Timestamptz(3)
+
+  /// When the CRM note was confirmed delivered.
+  noteDeliveredAt DateTime? @db.Timestamptz(3)
+
   createdAt DateTime @default(now()) @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @db.Timestamptz(3)
 
   @@index([leadId, createdAt])
   @@index([status])
   @@index([createdAt])
+  @@index([noteStatus])
   @@map("call_records")
 }
 

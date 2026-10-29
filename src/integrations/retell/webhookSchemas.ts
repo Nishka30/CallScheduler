@@ -27,6 +27,7 @@ const callAnalysisSchema = z
     call_summary: z.string().nullish(),
     in_voicemail: z.boolean().nullish(),
     user_sentiment: z.string().nullish(),
+    custom_analysis_data: z.record(z.unknown()).nullish(),
   })
   .passthrough();
 
@@ -35,9 +36,16 @@ const callObjectSchema = z
     call_id: z.string().min(1),
     call_status: z.string().nullish(),
     disconnection_reason: z.string().nullish(),
+    direction: z.string().nullish(),
     start_timestamp: z.number().int().nonnegative().nullish(),
     end_timestamp: z.number().int().nonnegative().nullish(),
     call_analysis: callAnalysisSchema.nullish(),
+    /** Full transcript as plain text, provided on `call_analyzed` (and sometimes `call_ended`). */
+    transcript: z.string().nullish(),
+    /** Speaker-labelled utterances with word timings; preserved structurally. */
+    transcript_object: z.array(z.unknown()).nullish(),
+    /** Recording URL, when Retell produced one and it is configured to be shared. */
+    recording_url: z.string().nullish(),
   })
   .passthrough();
 

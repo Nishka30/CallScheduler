@@ -19,6 +19,11 @@ vi.mock('../src/repositories/leadProcessing.repository.js', () => ({
   completeCallingLead: (...args: unknown[]) => completeCallingLead(...args),
 }));
 
+const deliverCallNote = vi.fn();
+vi.mock('../src/services/callNoteDelivery.service.js', () => ({
+  deliverCallNote: (...args: unknown[]) => deliverCallNote(...args),
+}));
+
 const { processRetellWebhook } = await import('../src/services/retellWebhook.service.js');
 
 const KEY = 'retell-test-key-never-real';
@@ -35,6 +40,7 @@ function sign(body: string, key: string, ts: number): string {
 beforeEach(() => {
   vi.clearAllMocks();
   completeCallingLead.mockResolvedValue(true);
+  deliverCallNote.mockResolvedValue('sent');
 });
 
 describe('verifyRetellSignature', () => {
@@ -287,5 +293,118 @@ describe('processRetellWebhook — terminal lead-processing transition', () => {
 
     expect(result.status).toBe('processed');
     expect(completeCallingLead).toHaveBeenCalledWith('lead-1');
+  });
+});
+
+describe('processRetellWebhook — full record capture & CRM note delivery', () => {
+  function run(body: string) {
+    return processRetellWebhook({
+      rawBody: body,
+      signature: sign(body, KEY, NOW),
+      apiKey: KEY,
+      now: NOW,
+    });
+  }
+  const analyzed = (over: Record<string, unknown> = {}) =>
+    JSON.stringify({
+      event: 'call_analyzed',
+      call: {
+        call_id: 'call_1',
+        call_status: 'ended',
+        direction: 'outbound',
+        disconnection_reason: 'user_hangup',
+        transcript: 'Agent: Hello\nUser: Hi',
+        transcript_object: [{ role: 'agent', content: 'Hello' }],
+        recording_url: 'https://rec.example/abc.wav',
+        call_analysis: { call_summary: 'Talked about a trek.', user_sentiment: 'Positive' },
+        ...over,
+      },
+    });
+
+  it('captures transcript, recording URL, structured transcript/analysis and metadata', async () => {
+    applyWebhookCallEvent.mockResolvedValue({
+      matched: true,
+      changed: true,
+      record: { leadId: 'lead-1', status: CallStatus.COMPLETED },
+    });
+
+    await run(analyzed());
+
+    const [, update] = applyWebhookCallEvent.mock.calls[0]!;
+    expect(update.transcript).toContain('Agent: Hello');
+    expect(update.recordingUrl).toBe('https://rec.example/abc.wav');
+    expect(update.transcriptJson).toEqual([{ role: 'agent', content: 'Hello' }]);
+    expect(update.analysis).toMatchObject({ call_summary: 'Talked about a trek.' });
+    expect(update.disconnectionReason).toBe('user_hangup');
+    expect(update.direction).toBe('outbound');
+  });
+
+  it('delivers the CRM note on call_analyzed for a completed call', async () => {
+    applyWebhookCallEvent.mockResolvedValue({
+      matched: true,
+      changed: true,
+      record: { leadId: 'lead-1', status: CallStatus.COMPLETED, retellCallId: 'call_1' },
+    });
+
+    const result = await run(analyzed());
+
+    expect(result.status).toBe('processed');
+    expect(deliverCallNote).toHaveBeenCalledTimes(1);
+  });
+
+  it('does NOT deliver the note on call_ended for a completed call (waits for analysis)', async () => {
+    applyWebhookCallEvent.mockResolvedValue({
+      matched: true,
+      changed: true,
+      record: { leadId: 'lead-1', status: CallStatus.COMPLETED },
+    });
+
+    await run(
+      JSON.stringify({ event: 'call_ended', call: { call_id: 'call_1', call_status: 'ended' } }),
+    );
+
+    expect(deliverCallNote).not.toHaveBeenCalled();
+  });
+
+  it('delivers the note on call_ended for a no-answer call (no analysis expected)', async () => {
+    applyWebhookCallEvent.mockResolvedValue({
+      matched: true,
+      changed: true,
+      record: { leadId: 'lead-1', status: CallStatus.NO_ANSWER },
+    });
+
+    await run(
+      JSON.stringify({
+        event: 'call_ended',
+        call: { call_id: 'call_1', disconnection_reason: 'dial_no_answer' },
+      }),
+    );
+
+    expect(deliverCallNote).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not re-deliver when the note was already sent', async () => {
+    applyWebhookCallEvent.mockResolvedValue({
+      matched: true,
+      changed: false,
+      record: { leadId: 'lead-1', status: CallStatus.COMPLETED, noteStatus: 'sent' },
+    });
+
+    await run(analyzed());
+
+    expect(deliverCallNote).not.toHaveBeenCalled();
+  });
+
+  it('a CRM note failure never fails the webhook', async () => {
+    applyWebhookCallEvent.mockResolvedValue({
+      matched: true,
+      changed: true,
+      record: { leadId: 'lead-1', status: CallStatus.COMPLETED, retellCallId: 'call_1' },
+    });
+    deliverCallNote.mockRejectedValue(new Error('crm unreachable'));
+
+    const result = await run(analyzed());
+
+    expect(result.status).toBe('processed'); // local record already persisted; still acknowledged
   });
 });

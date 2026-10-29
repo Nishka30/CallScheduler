@@ -19,12 +19,18 @@ vi.mock('../src/repositories/leadProcessing.repository.js', () => ({
 vi.mock('../src/repositories/callRecord.repository.js', () => ({
   recordCallAttempt: vi.fn(),
   attachProviderCallId: vi.fn(),
+  markCallAttemptFailed: vi.fn(),
+}));
+
+const deliverCallNote = vi.fn();
+vi.mock('../src/services/callNoteDelivery.service.js', () => ({
+  deliverCallNote: (...args: unknown[]) => deliverCallNote(...args),
 }));
 
 const { initiateCallForLead } = await import('../src/services/callOrchestrator.service.js');
 const { claimEligibleLead, markCalling, completeProcessing } =
   await import('../src/repositories/leadProcessing.repository.js');
-const { recordCallAttempt, attachProviderCallId } =
+const { recordCallAttempt, attachProviderCallId, markCallAttemptFailed } =
   await import('../src/repositories/callRecord.repository.js');
 
 const NOW = new Date('2026-10-16T12:00:00.000Z');
@@ -106,6 +112,8 @@ beforeEach(() => {
     record: { id: 'call-1' },
   } as never);
   vi.mocked(attachProviderCallId).mockResolvedValue({ id: 'call-1' } as never);
+  vi.mocked(markCallAttemptFailed).mockResolvedValue({ id: 'call-1', leadId: 'lead-1' } as never);
+  deliverCallNote.mockResolvedValue('sent');
 });
 
 describe('initiateCallForLead — safety switch', () => {
@@ -352,6 +360,22 @@ describe('initiateCallForLead — dialling', () => {
     const result = await initiateCallForLead('lead-1', deps);
 
     expect(result).toMatchObject({ outcome: 'provider_failed', reason: 'auth' });
+    expect(completeProcessing).toHaveBeenCalledWith('proc-1', 2, 'FAILED', expect.anything());
+    // A pre-dial failure is still recorded locally (CallRecord -> FAILED) and noted to the CRM.
+    expect(markCallAttemptFailed).toHaveBeenCalledWith('call-1', 'auth');
+    expect(deliverCallNote).toHaveBeenCalledTimes(1);
+  });
+
+  it('a pre-dial note failure never changes the FAILED outcome', async () => {
+    deliverCallNote.mockRejectedValue(new Error('crm down'));
+    const deps = fakeClients(
+      detail(),
+      new RetellApiError('client', 'bad request', { path: '/x', status: 422 }),
+    );
+
+    const result = await initiateCallForLead('lead-1', deps);
+
+    expect(result.outcome).toBe('provider_failed'); // best-effort note never alters the result
     expect(completeProcessing).toHaveBeenCalledWith('proc-1', 2, 'FAILED', expect.anything());
   });
 });

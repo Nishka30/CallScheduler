@@ -128,6 +128,20 @@ export class CalendarClient {
     return parseAppointmentPatch(await this.write('PATCH', path, body), path);
   }
 
+  /**
+   * `POST /api/crm/leads/<id>/notes` — the call record note, for EVERY call
+   * outcome. Sends exactly the CRM's documented contract `{ kind: "call", note }`
+   * (no invented fields) with the authorised write identity. Single-shot like the
+   * other writes: the CRM's idempotency support is unconfirmed, so this is not
+   * auto-retried in a way that could duplicate the note (see the delivery service).
+   */
+  async postCallNote(leadId: string, note: string): Promise<void> {
+    await this.write('POST', `/api/crm/leads/${encodeURIComponent(leadId)}/notes`, {
+      kind: 'call',
+      note,
+    });
+  }
+
   /** `POST /api/crm/leads/<id>/notes` — the one note for a no-booking outcome. */
   async postLeadNote(leadId: string, input: PostNoteInput): Promise<void> {
     const body: Record<string, unknown> = {

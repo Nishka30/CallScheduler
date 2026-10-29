@@ -302,6 +302,13 @@ describe('computeSafeCallUpdate (pure terminal-safe merge)', () => {
     summary: null,
     startedAt: null,
     endedAt: null,
+    transcript: null,
+    transcriptJson: null,
+    analysis: null,
+    recordingUrl: null,
+    disconnectionReason: null,
+    direction: null,
+    customerTz: null,
   };
 
   it('advances a non-terminal status forward', () => {
@@ -402,6 +409,7 @@ describe('computeSafeCallUpdate (pure terminal-safe merge)', () => {
 
   it('returns an empty patch when nothing may safely change', () => {
     const existing = {
+      ...base,
       status: CallStatus.COMPLETED,
       outcome: CallOutcome.VOICEMAIL,
       summary: 'done',

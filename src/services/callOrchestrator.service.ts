@@ -16,7 +16,12 @@ import {
   markCalling,
   completeProcessing,
 } from '../repositories/leadProcessing.repository.js';
-import { recordCallAttempt, attachProviderCallId } from '../repositories/callRecord.repository.js';
+import {
+  recordCallAttempt,
+  attachProviderCallId,
+  markCallAttemptFailed,
+} from '../repositories/callRecord.repository.js';
+import { deliverCallNote } from './callNoteDelivery.service.js';
 import { ProcessingStatus } from '@prisma/client';
 
 /**
@@ -300,6 +305,10 @@ async function handleDialFailure(
   // confirmed pre-dial rejection is terminal and awaits an explicit retry
   // decision, exactly like any other FAILED lead.
   await completeProcessing(processingId, processingVersion, ProcessingStatus.FAILED, error);
+  // Record the failed-before-dialling attempt locally (CallRecord -> FAILED) and
+  // as a CRM note. Best-effort: it never changes the outcome and never retries the
+  // call; a failure here is logged, not thrown.
+  await recordPreDialFailure(leadId, callRecordId, error);
   logger.error(
     { leadId, callRecordId, ...safe },
     'call orchestrator: provider refused before dialling; marked FAILED',
@@ -310,6 +319,23 @@ async function handleDialFailure(
     callRecordId,
     reason: error instanceof RetellApiError ? error.kind : 'unknown',
   };
+}
+
+async function recordPreDialFailure(
+  leadId: string,
+  callRecordId: string,
+  error: unknown,
+): Promise<void> {
+  try {
+    const reason = error instanceof RetellApiError ? error.kind : 'provider_refused';
+    const record = await markCallAttemptFailed(callRecordId, reason);
+    await deliverCallNote(record);
+  } catch (noteError) {
+    logger.warn(
+      { leadId, callRecordId, err: noteError instanceof Error ? noteError.name : 'unknown' },
+      'call orchestrator: could not record pre-dial failure note; processing already marked FAILED',
+    );
+  }
 }
 
 function errName(error: unknown): string | undefined {
