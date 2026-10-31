@@ -623,6 +623,22 @@ export async function getCallRecordDetail(idOrRetellCallId: string): Promise<Cal
   return prisma.callRecord.findUnique({ where: { retellCallId: idOrRetellCallId } });
 }
 
+/**
+ * Persists the customer's confirmed IANA timezone on the call record. The value
+ * is always a normalized, customer-confirmed zone, so re-writing it (e.g. after a
+ * correction) is safe. Scoped to the note/-tz columns only; never touches the call
+ * result or booking.
+ */
+export async function setCallRecordCustomerTz(
+  callRecordId: string,
+  timezone: string,
+): Promise<void> {
+  await prisma.callRecord.update({
+    where: { id: callRecordId },
+    data: { customerTz: timezone },
+  });
+}
+
 /** Marks a never-dialled attempt as FAILED by its id (no provider call id exists). */
 export async function markCallAttemptFailed(
   callRecordId: string,

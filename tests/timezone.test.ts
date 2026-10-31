@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { isValidIanaTimeZone, normalizeTimezone } from '../src/lib/timezone.js';
+import {
+  isValidIanaTimeZone,
+  normalizeTimezone,
+  timezoneLabel,
+  zonedDateRangeUtc,
+  formatSlotLocal,
+} from '../src/lib/timezone.js';
 
 describe('normalizeTimezone — the four live-tested cases', () => {
   it('passes a valid IANA id through unchanged (Asia/Kolkata → 200 live)', () => {
@@ -80,5 +86,70 @@ describe('isValidIanaTimeZone', () => {
     expect(isValidIanaTimeZone('UTC')).toBe(true);
     expect(isValidIanaTimeZone('invalid-zone')).toBe(false);
     expect(isValidIanaTimeZone('')).toBe(false);
+  });
+});
+
+describe('timezoneLabel — natural, DST-independent, no raw offsets', () => {
+  it('maps common zones to friendly names', () => {
+    expect(timezoneLabel('America/Denver')).toBe('Mountain Time');
+    expect(timezoneLabel('America/New_York')).toBe('Eastern Time');
+    expect(timezoneLabel('America/Los_Angeles')).toBe('Pacific Time');
+    expect(timezoneLabel('Asia/Kolkata')).toBe('India Standard Time');
+  });
+
+  it('never exposes a GMT/offset label to the customer', () => {
+    expect(timezoneLabel('Etc/GMT+5')).toBe('your local time'); // offset-only zone, city unknown
+    expect(timezoneLabel('UTC')).toBe('UTC');
+    for (const z of ['America/Denver', 'Asia/Kolkata', 'Etc/GMT+5', 'Etc/GMT-8']) {
+      expect(timezoneLabel(z)).not.toMatch(/GMT[+-]|[+-]\d/);
+    }
+  });
+
+  it('falls back safely for an invalid zone', () => {
+    expect(timezoneLabel('not-a-zone')).toBe('your local time');
+  });
+});
+
+describe('zonedDateRangeUtc — DST-correct local-day → UTC window', () => {
+  it('computes a normal Denver day (MST, GMT-7)', () => {
+    expect(zonedDateRangeUtc('2026-11-05', 'America/Denver')).toEqual({
+      from: '2026-11-05T07:00:00.000Z',
+      to: '2026-11-06T07:00:00.000Z',
+    });
+  });
+
+  it('handles a DST fall-back day as 25 hours (Denver 2026-11-01)', () => {
+    // MDT (GMT-6) at the start, MST (GMT-7) by the next local midnight.
+    expect(zonedDateRangeUtc('2026-11-01', 'America/Denver')).toEqual({
+      from: '2026-11-01T06:00:00.000Z',
+      to: '2026-11-02T07:00:00.000Z',
+    });
+  });
+
+  it('computes a Kolkata day (+5:30, no DST)', () => {
+    expect(zonedDateRangeUtc('2026-11-05', 'Asia/Kolkata')).toEqual({
+      from: '2026-11-04T18:30:00.000Z',
+      to: '2026-11-05T18:30:00.000Z',
+    });
+  });
+
+  it('returns null for a bad date or zone', () => {
+    expect(zonedDateRangeUtc('05-11-2026', 'America/Denver')).toBeNull();
+    expect(zonedDateRangeUtc('2026-11-05', 'not-a-zone')).toBeNull();
+  });
+});
+
+describe('formatSlotLocal — human local time, no offset', () => {
+  it('formats a UTC instant in the zone without a GMT suffix', () => {
+    const s = formatSlotLocal('2026-11-05T12:00:00.000Z', 'America/Denver'); // 5:00 AM MST
+    expect(s).toBeDefined();
+    expect(s).toContain('5:00');
+    expect(s).toContain('Nov');
+    expect(s).not.toMatch(/GMT|UTC|[+-]\d/);
+  });
+
+  it('returns undefined for bad input', () => {
+    expect(formatSlotLocal('nope', 'America/Denver')).toBeUndefined();
+    expect(formatSlotLocal('2026-11-05T12:00:00Z', 'not-a-zone')).toBeUndefined();
   });
 });

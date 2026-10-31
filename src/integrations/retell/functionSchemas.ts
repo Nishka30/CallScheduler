@@ -67,6 +67,13 @@ export function readFunctionArgs(request: RetellFunctionRequest): Record<string,
 export const getSlotsArgsSchema = z
   .object({
     timezone: z.string().min(1),
+    /**
+     * The customer's chosen calendar date (`YYYY-MM-DD`), interpreted in their
+     * confirmed timezone; the backend converts it to the correct UTC day window.
+     * Takes precedence over `from`/`to`.
+     */
+    date: z.string().min(1).optional(),
+    /** Explicit ISO window, used when `date` is not supplied. */
     from: z.string().min(1).optional(),
     to: z.string().min(1).optional(),
   })

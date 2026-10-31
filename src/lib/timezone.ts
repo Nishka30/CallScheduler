@@ -150,3 +150,136 @@ export function normalizeTimezone(raw: string | null | undefined): string | null
 
   return candidate !== null && isValidIanaTimeZone(candidate) ? candidate : null;
 }
+
+/**
+ * A natural, customer-facing label for a validated IANA zone — e.g.
+ * `America/Denver` → "Mountain Time", `Asia/Kolkata` → "India Standard Time".
+ *
+ * Uses `Intl`'s DST-independent generic name (so it never flips to
+ * "…Daylight Time"). Deliberately NEVER returns a raw GMT/UTC offset to the
+ * customer: for offset-only zones (`Etc/GMT±N`) where the city is unknown we
+ * return a neutral phrase (the agent should confirm the customer's city), and for
+ * any other zone whose generic name is offset-like we fall back to the humanized
+ * IANA city segment. Falls back safely for an unknown/invalid input.
+ */
+export function timezoneLabel(tz: string): string {
+  if (!isValidIanaTimeZone(tz)) return 'your local time';
+  if (tz === 'UTC' || tz === 'Etc/UTC') return 'UTC';
+
+  let generic: string | undefined;
+  try {
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: tz,
+      timeZoneName: 'longGeneric',
+    }).formatToParts(new Date());
+    generic = parts.find((p) => p.type === 'timeZoneName')?.value;
+  } catch {
+    generic = undefined;
+  }
+
+  // A good label has a name, not an offset like "GMT-05:00".
+  if (generic && !/GMT|UTC|[+-]\d/.test(generic)) return generic;
+
+  // Offset-only zone with no known city: don't speak an offset.
+  if (tz.startsWith('Etc/')) return 'your local time';
+
+  // Otherwise humanize the city segment (e.g. "Asia/Kathmandu" → "Kathmandu").
+  return humanizeZoneCity(tz) ?? 'your local time';
+}
+
+function humanizeZoneCity(tz: string): string | undefined {
+  const segment = tz.split('/').pop();
+  if (!segment) return undefined;
+  const cleaned = segment.replace(/_/g, ' ').trim();
+  return cleaned.length > 0 ? cleaned : undefined;
+}
+
+/** Milliseconds a zone is ahead of UTC at a given instant (handles DST). */
+function tzOffsetMs(tz: string, instant: Date): number {
+  const dtf = new Intl.DateTimeFormat('en-US', {
+    timeZone: tz,
+    hourCycle: 'h23',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  });
+  const p = Object.fromEntries(dtf.formatToParts(instant).map((x) => [x.type, x.value]));
+  const asUtc = Date.UTC(
+    Number(p['year']),
+    Number(p['month']) - 1,
+    Number(p['day']),
+    Number(p['hour']),
+    Number(p['minute']),
+    Number(p['second']),
+  );
+  return asUtc - instant.getTime();
+}
+
+const LOCAL_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * UTC instant of local midnight for a `YYYY-MM-DD` calendar date in `tz`.
+ * Computes the zone offset AT that instant, so daylight-saving transitions are
+ * handled correctly (a local day is not always 24h). Null for a bad date/zone.
+ */
+function zonedDayStartUtc(localDate: string, tz: string): Date | null {
+  if (!LOCAL_DATE_RE.test(localDate) || !isValidIanaTimeZone(tz)) return null;
+  const y = Number(localDate.slice(0, 4));
+  const mo = Number(localDate.slice(5, 7));
+  const d = Number(localDate.slice(8, 10));
+  const guess = Date.UTC(y, mo - 1, d, 0, 0, 0);
+  if (Number.isNaN(guess)) return null;
+  const offset = tzOffsetMs(tz, new Date(guess));
+  return new Date(guess - offset);
+}
+
+/**
+ * The UTC window [start-of-local-day, start-of-next-local-day) for a calendar
+ * date in the customer's confirmed zone, as ISO strings for the CRM `from`/`to`.
+ *
+ * `to` is the start of the NEXT local day, which correctly spans a 23h/25h DST
+ * day. We treat it as an exclusive-style upper bound; consultation slots never
+ * fall on local midnight, so inclusive-vs-exclusive at the boundary is moot in
+ * practice (verified against the live CRM, which returned only the requested
+ * local day's slots for this exact window).
+ */
+export function zonedDateRangeUtc(
+  localDate: string,
+  tz: string,
+): { from: string; to: string } | null {
+  const start = zonedDayStartUtc(localDate, tz);
+  if (!start) return null;
+  const y = Number(localDate.slice(0, 4));
+  const mo = Number(localDate.slice(5, 7));
+  const d = Number(localDate.slice(8, 10));
+  const nextLocal = new Date(Date.UTC(y, mo - 1, d + 1, 0, 0, 0));
+  const nextDate = `${String(nextLocal.getUTCFullYear())}-${pad2(nextLocal.getUTCMonth() + 1)}-${pad2(nextLocal.getUTCDate())}`;
+  const end = zonedDayStartUtc(nextDate, tz);
+  if (!end) return null;
+  return { from: start.toISOString(), to: end.toISOString() };
+}
+
+/**
+ * Formats a UTC instant as a human local time in `tz`, with NO offset suffix —
+ * e.g. "Thu, 5 Nov 2026, 5:00 AM". DST-correct. Undefined for bad input.
+ */
+export function formatSlotLocal(utcIso: string, tz: string): string | undefined {
+  const at = new Date(utcIso);
+  if (Number.isNaN(at.getTime()) || !isValidIanaTimeZone(tz)) return undefined;
+  return new Intl.DateTimeFormat('en-US', {
+    timeZone: tz,
+    weekday: 'short',
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  }).format(at);
+}
+
+function pad2(n: number): string {
+  return String(n).padStart(2, '0');
+}

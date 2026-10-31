@@ -10,7 +10,12 @@ import {
 } from '../integrations/retell/functionSchemas.js';
 import { CalendarClient } from '../integrations/leadApi/calendar.client.js';
 import { LeadApiError } from '../integrations/leadApi/errors.js';
-import { normalizeTimezone } from '../lib/timezone.js';
+import {
+  normalizeTimezone,
+  timezoneLabel,
+  zonedDateRangeUtc,
+  formatSlotLocal,
+} from '../lib/timezone.js';
 import { offerTeamSlots, type SlotOffer } from './teamScheduling.service.js';
 import {
   bookAppointment,
@@ -18,7 +23,10 @@ import {
   type BookingResult,
 } from './appointmentBooking.service.js';
 import { buildBookingNote } from './bookingNote.service.js';
-import { findByRetellCallId } from '../repositories/callRecord.repository.js';
+import {
+  findByRetellCallId,
+  setCallRecordCustomerTz,
+} from '../repositories/callRecord.repository.js';
 import { findLatestAppointmentForLead } from '../repositories/appointmentRecord.repository.js';
 import type { MeetingType } from '../integrations/leadApi/calendar.schemas.js';
 
@@ -55,18 +63,26 @@ export type BookingFunctionResult =
   | { status: 'unknown_call'; reason: string }
   | { status: 'ok'; operation: 'get_slots' | 'book'; payload: Record<string, unknown> };
 
+/** Optional UTC window for availability queries. */
+export interface SlotRange {
+  from?: string;
+  to?: string;
+}
+
 export interface BookingFunctionDeps {
   verify?: typeof verifyRetellSignature;
   /** Resolves the authoritative lead for a provider call id (server-side binding). */
   findCallByProviderId?: (
     callId: string,
-  ) => Promise<{ leadId: string; personKey?: string | null } | null>;
+  ) => Promise<{ leadId: string; personKey?: string | null; callRecordId?: string } | null>;
   /** Existing appointment for a lead, for idempotency. */
   findExistingAppointment?: (
     leadId: string,
   ) => Promise<{ appointmentId: string; startsAt: Date | null } | null>;
-  offerSlots?: (leadId: string, tz: string) => Promise<SlotOffer>;
+  offerSlots?: (leadId: string, tz: string, range?: SlotRange) => Promise<SlotOffer>;
   book?: (request: BookingRequest) => Promise<BookingResult>;
+  /** Persists the customer's confirmed timezone to the bound call record. */
+  persistTimezone?: (callRecordId: string, timezone: string) => Promise<void>;
 }
 
 /** How many slots to offer the agent at once. */
@@ -164,6 +180,7 @@ export async function processBookingFunction(
   }
   const leadId = callRecord.leadId;
   const personKey = callRecord.personKey ?? undefined;
+  const callRecordId = callRecord.callRecordId;
 
   // Defence in depth: if Retell echoes a lead id in metadata, it must agree.
   const metaLeadId = readMetaLeadId(request.call.metadata);
@@ -178,16 +195,17 @@ export async function processBookingFunction(
   const args = readFunctionArgs(request);
 
   if (functionName === GET_SLOTS_FUNCTION) {
-    return handleGetSlots(leadId, args, deps);
+    return handleGetSlots(leadId, callRecordId, args, deps);
   }
   if (functionName === BOOK_FUNCTION) {
-    return handleBook(leadId, personKey, args, deps);
+    return handleBook(leadId, personKey, callRecordId, args, deps);
   }
   return { status: 'bad_request', reason: `unsupported function "${functionName ?? '(none)'}"` };
 }
 
 async function handleGetSlots(
   leadId: string,
+  callRecordId: string | undefined,
   rawArgs: Record<string, unknown>,
   deps: BookingFunctionDeps,
 ): Promise<BookingFunctionResult> {
@@ -215,12 +233,43 @@ async function handleGetSlots(
     };
   }
 
+  // Persist the confirmed timezone as soon as it is established (not only at booking).
+  await persistConfirmedTimezone(callRecordId, tz, deps);
+
+  // Date-specific availability: a `date` is interpreted in the customer's confirmed
+  // timezone and converted to the correct UTC day window (DST-safe); otherwise an
+  // explicit `from`/`to` is forwarded; otherwise the CRM's default window is used.
+  let range: SlotRange = {};
+  if (args.data.date !== undefined) {
+    const computed = zonedDateRangeUtc(args.data.date, tz);
+    if (computed === null) {
+      return {
+        status: 'ok',
+        operation: 'get_slots',
+        payload: {
+          available: false,
+          error: 'I didn’t catch a valid date. Which day works for you (for example 2026-11-05)?',
+        },
+      };
+    }
+    range = computed;
+  } else {
+    if (args.data.from !== undefined && !Number.isNaN(Date.parse(args.data.from))) {
+      range.from = args.data.from;
+    }
+    if (args.data.to !== undefined && !Number.isNaN(Date.parse(args.data.to))) {
+      range.to = args.data.to;
+    }
+  }
+
+  const label = timezoneLabel(tz);
   let offer: SlotOffer;
   try {
     offer = deps.offerSlots
-      ? await deps.offerSlots(leadId, tz)
+      ? await deps.offerSlots(leadId, tz, range)
       : await offerTeamSlots(leadId, tz, interactiveCalendarClient(), {
           limit: SLOT_LIMIT,
+          ...range,
         });
   } catch (error) {
     // Any upstream failure (schema mismatch, timeout, 5xx) becomes a spoken
@@ -243,23 +292,32 @@ async function handleGetSlots(
       operation: 'get_slots',
       payload: {
         available: false,
-        reason:
-          'No consultant is currently available to book. Take the customer’s details and let them know a consultant will follow up.',
+        timezone: tz,
+        timezone_label: label,
+        reason: args.data.date
+          ? 'No consultant is available on that date. Ask the customer for another day and check that date.'
+          : 'No consultant is currently available to book. Take the customer’s details and let them know a consultant will follow up.',
       },
     };
   }
 
-  // Only the times the agent needs — never agent emails or routing internals.
-  const slots = offer.slots.slice(0, SLOT_LIMIT).map((s) => ({
-    starts_at: s.startsAt,
-    ...(s.local === undefined ? {} : { local: s.local }),
-  }));
-  return { status: 'ok', operation: 'get_slots', payload: { available: true, slots } };
+  // Up to three times, in the customer's confirmed local timezone — formatted by us
+  // so the customer never hears a raw GMT offset. `starts_at` stays the UTC instant.
+  const slots = offer.slots.slice(0, SLOT_LIMIT).map((s) => {
+    const local = formatSlotLocal(s.startsAt, tz) ?? s.local;
+    return { starts_at: s.startsAt, ...(local === undefined ? {} : { local }) };
+  });
+  return {
+    status: 'ok',
+    operation: 'get_slots',
+    payload: { available: true, timezone: tz, timezone_label: label, slots },
+  };
 }
 
 async function handleBook(
   leadId: string,
   personKey: string | undefined,
+  callRecordId: string | undefined,
   rawArgs: Record<string, unknown>,
   deps: BookingFunctionDeps,
 ): Promise<BookingFunctionResult> {
@@ -281,6 +339,9 @@ async function handleBook(
   if (tz === null) {
     return bookError('I need the customer’s timezone in a standard form before I can book.');
   }
+
+  // Persist the same confirmed timezone used for the booking.
+  await persistConfirmedTimezone(callRecordId, tz, deps);
 
   // 4. Idempotency: if this lead is already booked, return that — never rebook.
   const findExisting = deps.findExistingAppointment ?? defaultFindExistingAppointment;
@@ -413,9 +474,33 @@ function readMetaLeadId(metadata: Record<string, unknown> | null | undefined): s
 
 async function defaultFindCall(
   callId: string,
-): Promise<{ leadId: string; personKey?: string | null } | null> {
+): Promise<{ leadId: string; personKey?: string | null; callRecordId?: string } | null> {
   const record = await findByRetellCallId(callId);
-  return record ? { leadId: record.leadId, personKey: record.personKey } : null;
+  return record
+    ? { leadId: record.leadId, personKey: record.personKey, callRecordId: record.id }
+    : null;
+}
+
+/**
+ * Persists the confirmed timezone to the bound call record as soon as it is
+ * established (on the first slots lookup and on booking). Best-effort: a failure
+ * here never fails the tool call and never alters booking.
+ */
+async function persistConfirmedTimezone(
+  callRecordId: string | undefined,
+  timezone: string,
+  deps: BookingFunctionDeps,
+): Promise<void> {
+  if (callRecordId === undefined) return;
+  const persist = deps.persistTimezone ?? setCallRecordCustomerTz;
+  try {
+    await persist(callRecordId, timezone);
+  } catch (error) {
+    logger.warn(
+      { callRecordId, err: error instanceof Error ? error.name : 'unknown' },
+      'booking function: could not persist confirmed timezone; continuing',
+    );
+  }
 }
 
 async function defaultFindExistingAppointment(

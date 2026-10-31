@@ -140,7 +140,7 @@ describe('processBookingFunction — request validation & binding', () => {
 });
 
 describe('processBookingFunction — get_available_slots', () => {
-  it('returns only times (never agent emails) on availability', async () => {
+  it('returns times with a human timezone label and no agent emails or GMT offsets', async () => {
     const raw = body('get_available_slots', { timezone: 'Asia/Kolkata' });
     const res = await processBookingFunction(input(raw), deps());
     expect(res.status).toBe('ok');
@@ -149,10 +149,14 @@ describe('processBookingFunction — get_available_slots', () => {
     const serialized = JSON.stringify(res.payload);
     expect(serialized).not.toContain('a@hw.com');
     expect(serialized).not.toContain('agents');
-    expect(res.payload.slots).toEqual([
-      { starts_at: '2026-10-25T09:00:00.000Z', local: 'Sun 25 Oct, 2:45 PM' },
-      { starts_at: '2026-10-25T10:00:00.000Z', local: 'Sun 25 Oct, 3:45 PM' },
-    ]);
+    // Customer-facing: the IANA tz + a natural label, and a local time with NO offset.
+    expect(res.payload.timezone).toBe('Asia/Kolkata');
+    expect(res.payload.timezone_label).toBe('India Standard Time');
+    const slots = res.payload.slots as { starts_at: string; local?: string }[];
+    expect(slots).toHaveLength(2);
+    expect(slots[0]!.starts_at).toBe('2026-10-25T09:00:00.000Z');
+    expect(slots[0]!.local).toBeDefined();
+    expect(slots[0]!.local).not.toMatch(/GMT|UTC|[+-]\d/); // no offset spoken
   });
 
   it('reports no availability for mode=none without offering a slot', async () => {
@@ -529,5 +533,91 @@ describe('processBookingFunction — book_consultation', () => {
     expect(spy).not.toHaveBeenCalled(); // never book without verified fresh availability
     const serialized = JSON.stringify(res.payload);
     expect(serialized).not.toContain('documented shape');
+  });
+});
+
+describe('processBookingFunction — date/window forwarding & timezone persistence', () => {
+  it('forwards an explicit from/to window to the availability lookup', async () => {
+    const raw = body('get_available_slots', {
+      timezone: 'Asia/Kolkata',
+      from: '2026-11-05T00:00:00.000Z',
+      to: '2026-11-06T00:00:00.000Z',
+    });
+    let seen: unknown;
+    await processBookingFunction(
+      input(raw),
+      deps({
+        offerSlots: (_l, _tz, range) => {
+          seen = range;
+          return Promise.resolve(offer());
+        },
+      }),
+    );
+    expect(seen).toEqual({ from: '2026-11-05T00:00:00.000Z', to: '2026-11-06T00:00:00.000Z' });
+  });
+
+  it('converts a local `date` to the correct UTC day window for the confirmed tz', async () => {
+    const raw = body('get_available_slots', { timezone: 'Asia/Kolkata', date: '2026-11-05' });
+    let seen: { from?: string; to?: string } | undefined;
+    await processBookingFunction(
+      input(raw),
+      deps({
+        offerSlots: (_l, _tz, range) => {
+          seen = range;
+          return Promise.resolve(offer());
+        },
+      }),
+    );
+    expect(seen).toEqual({ from: '2026-11-04T18:30:00.000Z', to: '2026-11-05T18:30:00.000Z' });
+  });
+
+  it('asks again for an invalid date, without calling the CRM', async () => {
+    const raw = body('get_available_slots', { timezone: 'Asia/Kolkata', date: 'next tuesday' });
+    const offerSpy = vi.fn((_l: string, _tz: string) => Promise.resolve(offer()));
+    const res = await processBookingFunction(input(raw), deps({ offerSlots: offerSpy }));
+    expect(res.status).toBe('ok');
+    if (res.status !== 'ok') return;
+    expect(res.payload.available).toBe(false);
+    expect(String(res.payload.error)).toMatch(/date/i);
+    expect(offerSpy).not.toHaveBeenCalled();
+  });
+
+  it('persists the confirmed timezone on get_available_slots (as soon as established)', async () => {
+    const raw = body('get_available_slots', { timezone: 'America/Denver' });
+    const persist = vi.fn((_id: string, _tz: string) => Promise.resolve());
+    await processBookingFunction(
+      input(raw),
+      deps({
+        findCallByProviderId: () =>
+          Promise.resolve({ leadId: LEAD_ID, callRecordId: 'call-rec-1' }),
+        persistTimezone: persist,
+      }),
+    );
+    expect(persist).toHaveBeenCalledWith('call-rec-1', 'America/Denver');
+  });
+
+  it('persists and books with the same confirmed timezone', async () => {
+    const raw = body('book_consultation', {
+      timezone: 'Asia/Kolkata',
+      starts_at: '2026-10-25T09:00:00.000Z',
+      confirmed: true,
+      confirmed_destination: 'Nepal',
+    });
+    const persist = vi.fn((_id: string, _tz: string) => Promise.resolve());
+    let captured: BookingRequest | undefined;
+    await processBookingFunction(
+      input(raw),
+      deps({
+        findCallByProviderId: () =>
+          Promise.resolve({ leadId: LEAD_ID, callRecordId: 'call-rec-1' }),
+        persistTimezone: persist,
+        book: (req) => {
+          captured = req;
+          return Promise.resolve({ outcome: 'booked', appointmentId: 'a' });
+        },
+      }),
+    );
+    expect(persist).toHaveBeenCalledWith('call-rec-1', 'Asia/Kolkata');
+    expect(captured?.customerTz).toBe('Asia/Kolkata');
   });
 });
