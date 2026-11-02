@@ -3,6 +3,8 @@ import {
   isValidIanaTimeZone,
   normalizeTimezone,
   timezoneLabel,
+  timezoneForRegion,
+  formatClockLabel,
   zonedDateRangeUtc,
   formatSlotLocal,
 } from '../src/lib/timezone.js';
@@ -136,6 +138,61 @@ describe('zonedDateRangeUtc — DST-correct local-day → UTC window', () => {
   it('returns null for a bad date or zone', () => {
     expect(zonedDateRangeUtc('05-11-2026', 'America/Denver')).toBeNull();
     expect(zonedDateRangeUtc('2026-11-05', 'not-a-zone')).toBeNull();
+  });
+});
+
+describe('timezoneForRegion — reliable single-zone country mapping only', () => {
+  it('maps single-timezone countries to their one IANA zone (real CLDR metadata)', () => {
+    // CLDR returns the canonical id (e.g. Asia/Calcutta), which is a valid IANA zone.
+    expect(timezoneForRegion('IN')).toBe('Asia/Calcutta');
+    expect(timezoneForRegion('GB')).toBe('Europe/London');
+    expect(timezoneForRegion('AE')).toBe('Asia/Dubai');
+    expect(timezoneForRegion('SG')).toBe('Asia/Singapore');
+    expect(timezoneForRegion('JP')).toBe('Asia/Tokyo');
+  });
+
+  it('is case/space tolerant', () => {
+    expect(timezoneForRegion('  in ')).toBe('Asia/Calcutta');
+    expect(timezoneForRegion('gb')).toBe('Europe/London');
+  });
+
+  it('returns null for multi-timezone countries (ambiguous — never guess)', () => {
+    for (const r of ['US', 'RU', 'AU', 'CA', 'BR', 'ID']) {
+      expect(timezoneForRegion(r)).toBeNull();
+    }
+  });
+
+  it('returns null for unknown regions, non-ISO input, and null/undefined', () => {
+    expect(timezoneForRegion('XX')).toBeNull();
+    expect(timezoneForRegion('Nepal')).toBeNull();
+    expect(timezoneForRegion('')).toBeNull();
+    expect(timezoneForRegion('1N')).toBeNull();
+    expect(timezoneForRegion(null)).toBeNull();
+    expect(timezoneForRegion(undefined)).toBeNull();
+  });
+
+  it('every non-null result is a valid IANA zone with a friendly (non-offset) label', () => {
+    for (const r of ['IN', 'GB', 'AE', 'SG', 'JP', 'FR', 'NP']) {
+      const z = timezoneForRegion(r);
+      expect(z).not.toBeNull();
+      expect(isValidIanaTimeZone(z!)).toBe(true);
+      expect(timezoneLabel(z!)).not.toMatch(/GMT[+-]|[+-]\d/);
+    }
+  });
+});
+
+describe('formatClockLabel — current local wall-clock, dynamically computed', () => {
+  it('formats the instant in the zone as a friendly time', () => {
+    // 2026-11-05T19:30:00Z = 12:30 PM in Denver (MST, GMT-7).
+    const at = new Date('2026-11-05T19:30:00.000Z');
+    expect(formatClockLabel('America/Denver', at)).toBe('12:30 PM');
+    // Same instant is 1:00 AM next day in Kolkata (+5:30).
+    expect(formatClockLabel('Asia/Kolkata', at)).toBe('1:00 AM');
+  });
+
+  it('returns undefined for an invalid zone or instant', () => {
+    expect(formatClockLabel('not-a-zone', new Date())).toBeUndefined();
+    expect(formatClockLabel('America/Denver', new Date('nope'))).toBeUndefined();
   });
 });
 

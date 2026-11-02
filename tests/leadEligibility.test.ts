@@ -277,7 +277,18 @@ describe('phone verdict', () => {
       e164: '+447700900123',
       tier: 'live_mobile',
       lineType: 'mobile',
+      countryIso: 'GB',
     });
+  });
+
+  it('omits countryIso when the verdict has no country_iso', () => {
+    const verdict = readPhoneVerdict({
+      phone_e164: '+447700900123',
+      valid: true,
+      tier: 'live_mobile',
+    });
+    expect(verdict).toEqual({ status: 'valid', e164: '+447700900123', tier: 'live_mobile' });
+    expect(verdict).not.toHaveProperty('countryIso');
   });
 
   it('rejects the confirmed "never validated" shape', () => {
@@ -364,6 +375,7 @@ describe('phone verdict', () => {
       e164: '+916291764011',
       tier: 'live_mobile',
       lineType: 'mobile',
+      countryIso: 'IN',
     });
     expect(evaluatePhoneEligibility({ phone: laterConfirmedShape }).outcome).toBe('ELIGIBLE');
   });

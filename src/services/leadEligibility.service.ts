@@ -222,7 +222,7 @@ export function parseTimestamp(value: unknown): Date | null {
 // ---------------------------------------------------------------------------
 
 export type PhoneVerdict =
-  | { status: 'valid'; e164: string; tier?: string; lineType?: string }
+  | { status: 'valid'; e164: string; tier?: string; lineType?: string; countryIso?: string }
   | { status: 'invalid'; detail: string }
   /** The verdict object was absent or did not have the confirmed shape. */
   | { status: 'unreadable'; observedKeys: string[] };
@@ -262,6 +262,9 @@ export function readPhoneVerdict(phone: unknown): PhoneVerdict {
 
   const tier = typeof record['tier'] === 'string' ? record['tier'] : undefined;
   const lineType = typeof record['line_type'] === 'string' ? record['line_type'] : undefined;
+  // ISO 3166-1 alpha-2 region the CRM's number validation resolved. Used only as a
+  // last-resort timezone SUGGESTION (never dialled, never auto-confirmed).
+  const countryIso = typeof record['country_iso'] === 'string' ? record['country_iso'] : undefined;
 
   if (record['valid'] !== true) {
     return {
@@ -288,6 +291,7 @@ export function readPhoneVerdict(phone: unknown): PhoneVerdict {
     e164: e164.trim(),
     ...(tier === undefined ? {} : { tier }),
     ...(lineType === undefined ? {} : { lineType }),
+    ...(countryIso === undefined ? {} : { countryIso }),
   };
 }
 

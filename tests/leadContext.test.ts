@@ -96,6 +96,37 @@ describe('buildLeadCallContext', () => {
     expect(context.beenBefore).toBe('No');
   });
 
+  it('reads the CRM timezone from current.time_zone into the context', () => {
+    const context = buildLeadCallContext(
+      '1',
+      detail({ current: { name: 'John Smyth', time_zone: 'America/Denver' } }),
+    );
+    expect(context.customerTz).toBe('America/Denver');
+  });
+
+  it('prefers the latest current.time_zone over an older captured value', () => {
+    const context = buildLeadCallContext(
+      '1',
+      detail({
+        captured: { ...detail().captured, time_zone: 'Asia/Kolkata' },
+        current: { name: 'John Smyth', time_zone: 'America/Denver' },
+      }),
+    );
+    expect(context.customerTz).toBe('America/Denver');
+  });
+
+  it('falls back to a captured time_zone when current omits it', () => {
+    const context = buildLeadCallContext(
+      '1',
+      detail({ captured: { ...detail().captured, time_zone: 'Asia/Kolkata' } }),
+    );
+    expect(context.customerTz).toBe('Asia/Kolkata');
+  });
+
+  it('omits customerTz when the CRM returns no timezone (older lead)', () => {
+    expect(buildLeadCallContext('1', detail()).customerTz).toBeUndefined();
+  });
+
   it('derives the enquired destination from the funnel page slug, readably', () => {
     expect(
       buildLeadCallContext('1', detail({ captured: { ...detail().captured, page_slug: 'nepal' } }))
@@ -194,6 +225,24 @@ describe('buildLeadCallContext', () => {
     expect(context.phoneE164).toBe('+447700900123');
     expect(context.phoneTier).toBe('live_mobile');
     expect(context.phoneLineType).toBe('mobile');
+    // country_iso is carried for the last-resort timezone suggestion only.
+    expect(context.phoneCountryIso).toBe('GB');
+  });
+
+  it('omits phoneCountryIso when the verdict carries no country_iso', () => {
+    const context = buildLeadCallContext(
+      '1',
+      detail({
+        phone: {
+          phone_raw: '07700900123',
+          phone_e164: '+447700900123',
+          valid: true,
+          tier: 'live_mobile',
+        },
+      }),
+    );
+    expect(context.phoneE164).toBe('+447700900123');
+    expect(context.phoneCountryIso).toBeUndefined();
   });
 
   it('omits the phone number when the number was never validated', () => {

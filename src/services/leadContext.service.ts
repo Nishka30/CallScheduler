@@ -32,11 +32,26 @@ export interface LeadCallContext {
   /** Verdict metadata, e.g. `live_mobile` / `mobile`. */
   phoneTier?: string;
   phoneLineType?: string;
+  /**
+   * ISO 3166-1 alpha-2 region from the CRM phone verdict (`country_iso`), e.g.
+   * `IN`. Used ONLY as a last-resort timezone suggestion (via the phone fallback)
+   * when the browser timezone is absent; never dialled, never treated as the
+   * customer's confirmed timezone.
+   */
+  phoneCountryIso?: string;
 
   customerName?: string;
   brand?: string;
   country?: string;
   city?: string;
+  /**
+   * The customer's timezone as supplied by the CRM (`current.time_zone`), e.g.
+   * `America/Denver`. Carried through VERBATIM as an initial hint only — it is
+   * never inferred here, and the authoritative timezone remains the one the
+   * customer confirms on the call (normalized and persisted by the booking flow).
+   * Absent when the CRM returns null (older leads) or no value.
+   */
+  customerTz?: string;
   /** Free-text the customer typed on the form. */
   freeText?: string;
   /**
@@ -176,6 +191,7 @@ export function buildLeadCallContext(
     context.phoneE164 = verdict.e164;
     if (verdict.tier !== undefined) context.phoneTier = verdict.tier;
     if (verdict.lineType !== undefined) context.phoneLineType = verdict.lineType;
+    if (verdict.countryIso !== undefined) context.phoneCountryIso = verdict.countryIso;
   }
 
   const customerName = read('name');
@@ -189,6 +205,13 @@ export function buildLeadCallContext(
 
   const city = read('city');
   if (city) context.city = city;
+
+  // The CRM's browser-captured timezone (`current.time_zone`), preferred over any
+  // older `captured` value by the shared `read` precedence. Passed through as-is;
+  // normalisation/validation happens at the Retell boundary, and the customer
+  // still confirms it on the call. Nothing is inferred here.
+  const customerTz = read('time_zone');
+  if (customerTz) context.customerTz = customerTz;
 
   const freeText = read('free_text');
   if (freeText) context.freeText = freeText;

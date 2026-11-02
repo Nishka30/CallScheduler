@@ -187,6 +187,57 @@ export function timezoneLabel(tz: string): string {
   return humanizeZoneCity(tz) ?? 'your local time';
 }
 
+/**
+ * A single, reliable IANA zone for an ISO 3166-1 alpha-2 region code (e.g. `IN`,
+ * `GB`), or null when the region is unknown OR spans more than one zone.
+ *
+ * This is the phone-number timezone FALLBACK: the CRM's phone validation already
+ * resolves the number to a `country_iso`, and we map that region to a zone using
+ * CLDR metadata via `Intl.Locale` (the standard `getTimeZones()` where the
+ * runtime provides it, else the older `timeZones` accessor) — so there is no
+ * hand-written country→zone table. A region with several zones (US, Russia,
+ * Australia, Canada, …) returns null on purpose: a phone number alone cannot say
+ * which one, and we never guess. The result is only ever a SUGGESTION the
+ * customer must still confirm.
+ */
+export function timezoneForRegion(regionCode: string | null | undefined): string | null {
+  if (typeof regionCode !== 'string') return null;
+  const code = regionCode.trim().toUpperCase();
+  if (!/^[A-Z]{2}$/.test(code)) return null;
+
+  let zones: readonly string[];
+  try {
+    const locale = new Intl.Locale('und', { region: code }) as Intl.Locale & {
+      getTimeZones?: () => string[] | undefined;
+      timeZones?: string[];
+    };
+    zones =
+      (typeof locale.getTimeZones === 'function' ? locale.getTimeZones() : locale.timeZones) ?? [];
+  } catch {
+    return null;
+  }
+
+  // Exactly one zone => unambiguous and safe to suggest; anything else is not.
+  if (zones.length !== 1) return null;
+  const zone = zones[0];
+  return zone !== undefined && isValidIanaTimeZone(zone) ? zone : null;
+}
+
+/**
+ * The current wall-clock time in `tz` as a friendly label, e.g. "3:00 PM", for
+ * the agent to sanity-check a suggested zone with the customer ("is it around
+ * 3 PM where you are?"). Computed from the supplied instant (default: now), so it
+ * is never hard-coded. Undefined for an invalid zone or instant.
+ */
+export function formatClockLabel(tz: string, instant: Date = new Date()): string | undefined {
+  if (!isValidIanaTimeZone(tz) || Number.isNaN(instant.getTime())) return undefined;
+  return new Intl.DateTimeFormat('en-US', {
+    timeZone: tz,
+    hour: 'numeric',
+    minute: '2-digit',
+  }).format(instant);
+}
+
 function humanizeZoneCity(tz: string): string | undefined {
   const segment = tz.split('/').pop();
   if (!segment) return undefined;
