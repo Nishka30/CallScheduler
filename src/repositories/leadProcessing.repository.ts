@@ -246,6 +246,49 @@ export async function completeCallingLead(leadId: string): Promise<boolean> {
 }
 
 /**
+ * Finalizes a lead that polling marked ELIGIBLE but the calling stage then
+ * refused BEFORE claiming it — an expired caller hold, the CRM routing/ownership
+ * gate, an unvalidated phone, or a re-checked eligibility rule.
+ *
+ * Without this, those early orchestrator rejections persisted nothing, so the row
+ * stayed ELIGIBLE forever: every later poll saw it as already-decided and never
+ * retried it, and the re-evaluation sweep (NEEDS_REVIEW only) never looked at it —
+ * the lead was stuck, uncallable and undiagnosable.
+ *
+ * Status-guarded CAS matching ONLY `status = ELIGIBLE` (like `completeCallingLead`,
+ * no version token because the orchestrator never claimed the row): if a worker
+ * claimed the lead (ELIGIBLE -> PROCESSING) between the orchestrator's read and
+ * this write, the update matches nothing and is a safe no-op, so a lead mid-call is
+ * never clobbered. It can NEVER touch a PENDING/PROCESSING/CALLING/COMPLETED/
+ * FAILED/SKIPPED/NEEDS_REVIEW lead.
+ *
+ * The target status must be an already-decided state chosen to match the existing
+ * semantics: SKIPPED for a terminal business/timing decision (never retried), or
+ * NEEDS_REVIEW for a data-availability gap the re-evaluation sweep may retry. The
+ * rejection `reason`/`detail` are retained so the lead's non-call is diagnosable.
+ */
+export async function finalizeRejectedEligibleLead(
+  leadId: string,
+  status: typeof ProcessingStatus.SKIPPED | typeof ProcessingStatus.NEEDS_REVIEW,
+  reason: string,
+  detail?: string,
+  now: Date = new Date(),
+): Promise<boolean> {
+  const { count } = await prisma.leadProcessing.updateMany({
+    where: { leadId, status: ProcessingStatus.ELIGIBLE },
+    data: {
+      status,
+      version: { increment: 1 },
+      decisionReason: reason.slice(0, 64),
+      decisionDetail: detail === undefined ? null : sanitizeDecisionDetail(detail),
+      decidedAt: now,
+    },
+  });
+
+  return count === 1;
+}
+
+/**
  * Returns a lead to PENDING so it can be picked up again.
  *
  * Deliberately refuses to requeue a lead in the CALLING state: an outbound call

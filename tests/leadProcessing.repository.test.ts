@@ -29,6 +29,7 @@ const {
   completeProcessing,
   completeCallingLead,
   ensureProcessingRecord,
+  finalizeRejectedEligibleLead,
   markCalling,
   requeueForRetry,
   sanitizeErrorMessage,
@@ -310,6 +311,67 @@ describe('completeCallingLead', () => {
     leadProcessing.updateMany.mockResolvedValue({ count: 0 });
 
     expect(await completeCallingLead('lead-1')).toBe(false);
+  });
+});
+
+describe('finalizeRejectedEligibleLead', () => {
+  it('moves an ELIGIBLE lead to a terminal state with a status-guarded CAS, keeping reason + detail', async () => {
+    const now = new Date('2026-04-01T08:00:00.000Z');
+    leadProcessing.updateMany.mockResolvedValue({ count: 1 });
+
+    const ok = await finalizeRejectedEligibleLead(
+      'lead-1',
+      ProcessingStatus.SKIPPED,
+      'hold_expired',
+      'caller hold is not active',
+      now,
+    );
+
+    expect(ok).toBe(true);
+    const call = leadProcessing.updateMany.mock.calls[0]![0] as {
+      where: Record<string, unknown>;
+      data: Record<string, unknown>;
+    };
+    // Matches ONLY an ELIGIBLE lead, so a lead another worker already claimed
+    // (ELIGIBLE -> PROCESSING) is never clobbered mid-call.
+    expect(call.where).toEqual({ leadId: 'lead-1', status: ProcessingStatus.ELIGIBLE });
+    expect(call.data.status).toBe(ProcessingStatus.SKIPPED);
+    expect(call.data.version).toEqual({ increment: 1 });
+    expect(call.data.decisionReason).toBe('hold_expired');
+    expect(call.data.decisionDetail).toBe('caller hold is not active');
+    expect(call.data.decidedAt).toBe(now);
+  });
+
+  it('returns false (safe no-op) when the lead is no longer ELIGIBLE', async () => {
+    leadProcessing.updateMany.mockResolvedValue({ count: 0 });
+
+    expect(
+      await finalizeRejectedEligibleLead('lead-1', ProcessingStatus.SKIPPED, 'already_assigned'),
+    ).toBe(false);
+  });
+
+  it('can route a data-gap rejection to NEEDS_REVIEW so the sweep can retry it', async () => {
+    leadProcessing.updateMany.mockResolvedValue({ count: 1 });
+
+    await finalizeRejectedEligibleLead('lead-1', ProcessingStatus.NEEDS_REVIEW, 'phone_verdict_unreadable');
+
+    const call = leadProcessing.updateMany.mock.calls[0]![0] as { data: Record<string, unknown> };
+    expect(call.data.status).toBe(ProcessingStatus.NEEDS_REVIEW);
+    expect(call.data.decisionDetail).toBeNull();
+  });
+
+  it('sanitizes the detail so a credential can never be persisted', async () => {
+    leadProcessing.updateMany.mockResolvedValue({ count: 1 });
+
+    await finalizeRejectedEligibleLead(
+      'lead-1',
+      ProcessingStatus.SKIPPED,
+      'crm_route_excluded',
+      'failed at postgresql://admin:hunter2@db.internal:5432/prod',
+    );
+
+    const call = leadProcessing.updateMany.mock.calls[0]![0] as { data: Record<string, unknown> };
+    expect(call.data.decisionDetail).not.toContain('hunter2');
   });
 });
 

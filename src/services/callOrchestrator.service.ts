@@ -15,6 +15,7 @@ import {
   claimEligibleLead,
   markCalling,
   completeProcessing,
+  finalizeRejectedEligibleLead,
 } from '../repositories/leadProcessing.repository.js';
 import {
   recordCallAttempt,
@@ -122,6 +123,16 @@ export async function initiateCallForLead(
     (eligibility.outcome === 'NEEDS_REVIEW' &&
       eligibility.reason === 'awaiting_new_lead_rule_confirmation');
   if (!hardRulesPassed) {
+    // Persist the terminal/retryable decision so the lead does not stay stuck
+    // ELIGIBLE. A SKIPPED eligibility outcome is a business no (terminal); a
+    // NEEDS_REVIEW outcome is a data gap the re-evaluation sweep can retry.
+    await persistEligibleRejection(
+      leadId,
+      eligibility.outcome === 'SKIPPED' ? ProcessingStatus.SKIPPED : ProcessingStatus.NEEDS_REVIEW,
+      eligibility.reason,
+      eligibility.detail,
+      now(),
+    );
     return { outcome: 'rejected_eligibility', leadId, reason: eligibility.reason };
   }
 
@@ -130,12 +141,43 @@ export async function initiateCallForLead(
   //     check is applied separately at step 5.)
   const crmGate = evaluateCrmGate(row);
   if (!crmGate.ok) {
+    // Routing/ownership failures (legacy/crm route, already assigned/booked,
+    // no contact number) are terminal business decisions -> SKIPPED.
+    await persistEligibleRejection(
+      leadId,
+      ProcessingStatus.SKIPPED,
+      crmGate.reason,
+      crmGate.detail,
+      now(),
+    );
     return { outcome: 'rejected_eligibility', leadId, reason: crmGate.reason };
   }
 
   // 4. Phone verdict — only a validated E.164 number may be dialled.
   const verdict = readPhoneVerdict(detail.phone);
   if (verdict.status !== 'valid') {
+    // invalid = a number that can never be dialled (terminal -> SKIPPED);
+    // unreadable = the verdict shape was missing (a data gap the sweep can
+    // retry -> NEEDS_REVIEW). Mirrors evaluatePhoneEligibility's mapping.
+    if (verdict.status === 'invalid') {
+      await persistEligibleRejection(
+        leadId,
+        ProcessingStatus.SKIPPED,
+        'phone_not_validated',
+        verdict.detail,
+        now(),
+      );
+    } else {
+      await persistEligibleRejection(
+        leadId,
+        ProcessingStatus.NEEDS_REVIEW,
+        'phone_verdict_unreadable',
+        verdict.observedKeys.length > 0
+          ? `phone verdict keys: ${verdict.observedKeys.slice(0, 12).join(', ')}`
+          : 'phone verdict was absent or not an object',
+        now(),
+      );
+    }
     return {
       outcome: 'rejected_phone',
       leadId,
@@ -149,6 +191,16 @@ export async function initiateCallForLead(
   const holdRaw =
     typeof current['caller_hold_until'] === 'string' ? current['caller_hold_until'] : null;
   if (!isHoldActive(evaluateCallWindow(holdRaw, now()))) {
+    // The call window has closed (and the CRM forwards such leads to the legacy
+    // centre). Calling late is forbidden, so this is terminal -> SKIPPED. We do
+    // NOT extend the hold and never make an expired lead callable.
+    await persistEligibleRejection(
+      leadId,
+      ProcessingStatus.SKIPPED,
+      'hold_expired',
+      'caller hold is not active',
+      now(),
+    );
     return { outcome: 'rejected_hold_expired', leadId, reason: 'caller hold is not active' };
   }
 
@@ -181,6 +233,13 @@ export async function initiateCallForLead(
     logger.info(
       { leadId },
       'call orchestrator: caller hold lapsed before dialling; not placing a call',
+    );
+    await persistEligibleRejection(
+      leadId,
+      ProcessingStatus.SKIPPED,
+      'hold_expired',
+      'caller hold lapsed before dialling',
+      now(),
     );
     return {
       outcome: 'rejected_hold_expired',
@@ -266,6 +325,43 @@ export function toListRow(leadId: string, detail: LeadDetail): LeadListRow {
     whatsapp: cur['whatsapp'],
     person_key: detail.personKey ?? cur['person_key'],
   } as unknown as LeadListRow;
+}
+
+/**
+ * Persists an early calling-stage rejection (one that returns BEFORE the lead is
+ * claimed) so the row does not stay stuck ELIGIBLE, and emits the per-lead "not
+ * called" diagnostic line (leadId + persisted status + reason code + detail).
+ *
+ * The underlying write is a status-guarded CAS on ELIGIBLE, so if another worker
+ * already claimed the lead it is a safe no-op. Best-effort by design: a failure to
+ * persist is logged and never thrown, so it can never change the orchestrator's
+ * returned outcome or mask the real rejection reason.
+ */
+async function persistEligibleRejection(
+  leadId: string,
+  status: typeof ProcessingStatus.SKIPPED | typeof ProcessingStatus.NEEDS_REVIEW,
+  reason: string,
+  detail: string | undefined,
+  now: Date,
+): Promise<void> {
+  try {
+    const applied = await finalizeRejectedEligibleLead(leadId, status, reason, detail, now);
+    logger.info(
+      {
+        leadId,
+        persistedStatus: status,
+        reason,
+        ...(detail === undefined ? {} : { detail }),
+        applied,
+      },
+      'call orchestrator: lead reached the calling stage but was not called; rejection persisted',
+    );
+  } catch (error) {
+    logger.warn(
+      { leadId, reason, err: errName(error) },
+      'call orchestrator: could not persist calling-stage rejection; lead left unchanged',
+    );
+  }
 }
 
 function leadReadFailure(leadId: string, error: unknown, what: string): OrchestratorResult {

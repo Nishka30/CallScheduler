@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { ProcessingStatus } from '@prisma/client';
 import { parseEnv } from '../src/config/env.js';
 import { RetellApiError } from '../src/integrations/retell/errors.js';
 import { LeadApiError } from '../src/integrations/leadApi/errors.js';
@@ -14,6 +15,7 @@ vi.mock('../src/repositories/leadProcessing.repository.js', () => ({
   claimEligibleLead: vi.fn(),
   markCalling: vi.fn(),
   completeProcessing: vi.fn(),
+  finalizeRejectedEligibleLead: vi.fn(),
 }));
 
 vi.mock('../src/repositories/callRecord.repository.js', () => ({
@@ -28,7 +30,7 @@ vi.mock('../src/services/callNoteDelivery.service.js', () => ({
 }));
 
 const { initiateCallForLead } = await import('../src/services/callOrchestrator.service.js');
-const { claimEligibleLead, markCalling, completeProcessing } =
+const { claimEligibleLead, markCalling, completeProcessing, finalizeRejectedEligibleLead } =
   await import('../src/repositories/leadProcessing.repository.js');
 const { recordCallAttempt, attachProviderCallId, markCallAttemptFailed } =
   await import('../src/repositories/callRecord.repository.js');
@@ -113,6 +115,7 @@ beforeEach(() => {
   } as never);
   vi.mocked(attachProviderCallId).mockResolvedValue({ id: 'call-1' } as never);
   vi.mocked(markCallAttemptFailed).mockResolvedValue({ id: 'call-1', leadId: 'lead-1' } as never);
+  vi.mocked(finalizeRejectedEligibleLead).mockResolvedValue(true);
   deliverCallNote.mockResolvedValue('sent');
 });
 
@@ -402,5 +405,154 @@ describe('initiateCallForLead — Oct 20 crm_route / ownership gate', () => {
   it('rejects a lead that already has a booked_call', async () => {
     const deps = fakeClients(detail({ booked_call: 'appt_1' }));
     expect((await initiateCallForLead('lead-1', deps)).reason).toBe('already_booked');
+  });
+});
+
+describe('initiateCallForLead — persists the final rejection (no stuck ELIGIBLE)', () => {
+  it('persists SKIPPED/hold_expired when the caller hold is expired', async () => {
+    const deps = fakeClients(detail({ caller_hold_until: EXPIRED_HOLD }));
+
+    const result = await initiateCallForLead('lead-1', deps);
+
+    expect(result.outcome).toBe('rejected_hold_expired');
+    expect(finalizeRejectedEligibleLead).toHaveBeenCalledWith(
+      'lead-1',
+      ProcessingStatus.SKIPPED,
+      'hold_expired',
+      expect.any(String),
+      expect.any(Date),
+    );
+    expect(deps.retellClient.createPhoneCall).not.toHaveBeenCalled();
+  });
+
+  it('persists SKIPPED/hold_expired when the hold lapses during the person fetch', async () => {
+    let clock = new Date('2026-10-16T12:00:00.000Z');
+    const deps = fakeClients(detail({ caller_hold_until: '2026-10-16T12:01:00.000Z' }));
+    deps.now = () => clock;
+    deps.leadApiClient.getPerson = vi.fn().mockImplementation(() => {
+      clock = new Date('2026-10-16T12:02:00.000Z');
+      return Promise.resolve({ profile: {}, leads: [] });
+    });
+
+    const result = await initiateCallForLead('lead-1', deps);
+
+    expect(result.outcome).toBe('rejected_hold_expired');
+    expect(finalizeRejectedEligibleLead).toHaveBeenCalledWith(
+      'lead-1',
+      ProcessingStatus.SKIPPED,
+      'hold_expired',
+      expect.any(String),
+      expect.any(Date),
+    );
+  });
+
+  it('persists SKIPPED/crm_route_excluded when the lead was forwarded to legacy', async () => {
+    const deps = fakeClients(detail({ crm_route: 'legacy' }));
+
+    await initiateCallForLead('lead-1', deps);
+
+    expect(finalizeRejectedEligibleLead).toHaveBeenCalledWith(
+      'lead-1',
+      ProcessingStatus.SKIPPED,
+      'crm_route_excluded',
+      expect.any(String),
+      expect.any(Date),
+    );
+  });
+
+  it('persists SKIPPED/already_assigned', async () => {
+    const deps = fakeClients(detail({ sales_agent_email: 'sue@hw.com' }));
+
+    await initiateCallForLead('lead-1', deps);
+
+    expect(finalizeRejectedEligibleLead).toHaveBeenCalledWith(
+      'lead-1',
+      ProcessingStatus.SKIPPED,
+      'already_assigned',
+      undefined,
+      expect.any(Date),
+    );
+  });
+
+  it('persists SKIPPED/already_booked', async () => {
+    const deps = fakeClients(detail({ booked_call: 'appt_1' }));
+
+    await initiateCallForLead('lead-1', deps);
+
+    expect(finalizeRejectedEligibleLead).toHaveBeenCalledWith(
+      'lead-1',
+      ProcessingStatus.SKIPPED,
+      'already_booked',
+      undefined,
+      expect.any(Date),
+    );
+  });
+
+  it('persists SKIPPED/lead_deleted on a re-checked eligibility failure', async () => {
+    const deps = fakeClients(detail({ is_deleted: true }));
+
+    await initiateCallForLead('lead-1', deps);
+
+    expect(finalizeRejectedEligibleLead).toHaveBeenCalledWith(
+      'lead-1',
+      ProcessingStatus.SKIPPED,
+      'lead_deleted',
+      undefined,
+      expect.any(Date),
+    );
+  });
+
+  it('persists SKIPPED/phone_not_validated for an unvalidated number', async () => {
+    const deps = fakeClients(detail({}, { phone: { phone_e164: null, valid: null, tier: 'none' } }));
+
+    const result = await initiateCallForLead('lead-1', deps);
+
+    expect(result.outcome).toBe('rejected_phone');
+    expect(finalizeRejectedEligibleLead).toHaveBeenCalledWith(
+      'lead-1',
+      ProcessingStatus.SKIPPED,
+      'phone_not_validated',
+      expect.any(String),
+      expect.any(Date),
+    );
+  });
+
+  it('persists NEEDS_REVIEW/phone_verdict_unreadable when the verdict shape is unreadable (retryable)', async () => {
+    // Missing the confirmed keys -> unreadable -> a DATA GAP, not a business no.
+    const deps = fakeClients(detail({}, { phone: { nonsense: true } }));
+
+    const result = await initiateCallForLead('lead-1', deps);
+
+    expect(result.outcome).toBe('rejected_phone');
+    expect(finalizeRejectedEligibleLead).toHaveBeenCalledWith(
+      'lead-1',
+      ProcessingStatus.NEEDS_REVIEW,
+      'phone_verdict_unreadable',
+      expect.any(String),
+      expect.any(Date),
+    );
+  });
+
+  it('does NOT persist a rejection on the happy path (lead stays claimable and is called)', async () => {
+    const deps = fakeClients();
+
+    const result = await initiateCallForLead('lead-1', deps);
+
+    expect(result.outcome).toBe('call_initiated');
+    expect(finalizeRejectedEligibleLead).not.toHaveBeenCalled();
+  });
+
+  it('a WhatsApp-only lead (phone null) still passes the gate and dials the validated E.164', async () => {
+    // phone column null, number lives in whatsapp; the detail phone VERDICT is the
+    // validated E.164 that is actually dialled (TASK 5 safety requirement).
+    const deps = fakeClients(detail({ phone: null, whatsapp: '+447700900123' }));
+
+    const result = await initiateCallForLead('lead-1', deps);
+
+    expect(result.outcome).toBe('call_initiated');
+    expect(finalizeRejectedEligibleLead).not.toHaveBeenCalled();
+    const callArg = (deps.retellClient.createPhoneCall as ReturnType<typeof vi.fn>).mock
+      .calls[0]![0];
+    expect(callArg.toNumber).toBe('+447700900123');
   });
 });
