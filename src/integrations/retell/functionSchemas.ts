@@ -82,7 +82,12 @@ export const getSlotsArgsSchema = z
 /** Args for `book_consultation`. The lead id is NEVER taken from here. */
 export const bookArgsSchema = z
   .object({
-    timezone: z.string().min(1),
+    /**
+     * Optional here: used only for the booking's `customer_tz`. When omitted the
+     * backend falls back to the timezone captured during `get_available_slots`
+     * (persisted on the call record), so a valid slot-based booking is not blocked.
+     */
+    timezone: z.string().min(1).optional(),
     starts_at: z.string().min(1),
     meeting_type: z.enum(MEETING_TYPES).optional(),
     /** The agent sets this true only after the customer confirms the summary. */

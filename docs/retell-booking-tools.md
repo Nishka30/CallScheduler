@@ -203,6 +203,25 @@ Dashboard fields → Name: `book_consultation`; URL: same endpoint; Method: POST
 not happen for a correctly configured, signed call; the agent would see a generic
 tool error.)
 
+> **Dashboard flow requirement (must be configured in Retell, not in this repo):**
+> the transition to a "Booking Confirmed" state MUST be conditioned on the tool
+> response field **`booked == true`** (and may also treat `booked:true, already_booked:true`
+> as confirmed). It must NOT fire merely because the tool call completed with a 2xx —
+> a `booked:false` response (slot gone / uncertain / follow-up) returns HTTP 200 by
+> design, so a completion-only transition would wrongly tell the customer they are
+> booked. The backend cannot enforce this; it lives in the Retell agent flow config.
+
+## Testing `book_consultation`
+
+A dashboard "Test Input" has no real call behind it, so its `call.call_id` resolves
+to no `CallRecord` and the endpoint correctly returns **403 "call is not associated
+with a known lead"** — that is production lead-binding working, not a bug, and is NOT
+a valid way to exercise the production booking path. Test the real path with a real
+call: the live outbound call already has a `CallRecord` with its `retellCallId`, so
+testing end-to-end (or replaying a captured request from a real call id) exercises
+binding correctly. The lead is ALWAYS resolved server-side from `call.call_id`; a
+`lead_id` in the model's args is never trusted.
+
 ## Authentication — CONFIRMED
 
 Retell's custom-function docs confirm tool calls are signed with the **same**

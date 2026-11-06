@@ -621,3 +621,118 @@ describe('processBookingFunction — date/window forwarding & timezone persisten
     expect(captured?.customerTz).toBe('Asia/Kolkata');
   });
 });
+
+describe('processBookingFunction — production booking path (fixes)', () => {
+  const BOOK_ARGS = {
+    timezone: 'Asia/Kolkata',
+    starts_at: '2026-10-25T09:00:00.000Z',
+    confirmed: true,
+    confirmed_destination: 'Nepal',
+  };
+
+  it('resolves the lead from the real call binding and books (confirmed + destination + slot)', async () => {
+    const book = bookMock();
+    const raw = body('book_consultation', BOOK_ARGS);
+
+    const result = await processBookingFunction(input(raw), deps({ book }));
+
+    expect(result.status).toBe('ok');
+    expect(result).toMatchObject({ payload: { booked: true } });
+    // Lead comes ONLY from the call binding, never the args.
+    expect(book.mock.calls[0]![0].leadId).toBe(LEAD_ID);
+  });
+
+  it('books even when the book args omit timezone, using the tz captured at get_available_slots', async () => {
+    const book = bookMock();
+    const noTz = {
+      starts_at: BOOK_ARGS.starts_at,
+      confirmed: true,
+      confirmed_destination: BOOK_ARGS.confirmed_destination,
+    };
+    const raw = body('book_consultation', noTz);
+
+    const result = await processBookingFunction(
+      input(raw),
+      // The call record carries the timezone captured during get_available_slots.
+      deps({ book, findCallByProviderId: () => Promise.resolve({ leadId: LEAD_ID, customerTz: 'Asia/Kolkata' }) }),
+    );
+
+    expect(result).toMatchObject({ payload: { booked: true } });
+    expect(book.mock.calls[0]![0].customerTz).toBe('Asia/Kolkata');
+  });
+
+  it('missing confirmed_destination → precise failure (not the generic message)', async () => {
+    const noDest = {
+      timezone: BOOK_ARGS.timezone,
+      starts_at: BOOK_ARGS.starts_at,
+      confirmed: true,
+    };
+    const raw = body('book_consultation', noDest);
+
+    const result = await processBookingFunction(input(raw), deps());
+
+    expect(result).toMatchObject({ payload: { booked: false } });
+    const reason = (result as unknown as { payload: { reason: string } }).payload.reason;
+    expect(reason).toContain('confirmed destination');
+    expect(reason).not.toContain('chosen time'); // precise, not the blanket message
+  });
+
+  it('missing starts_at → precise failure naming the chosen time', async () => {
+    const noStart = {
+      timezone: BOOK_ARGS.timezone,
+      confirmed: true,
+      confirmed_destination: BOOK_ARGS.confirmed_destination,
+    };
+    const raw = body('book_consultation', noStart);
+
+    const result = await processBookingFunction(input(raw), deps());
+
+    expect(result).toMatchObject({ payload: { booked: false } });
+    expect((result as unknown as { payload: { reason: string } }).payload.reason).toContain('chosen time');
+  });
+
+  it('a chosen slot that is not available → precise "no longer available" failure', async () => {
+    const raw = body('book_consultation', BOOK_ARGS);
+
+    const result = await processBookingFunction(
+      input(raw),
+      deps({ book: () => Promise.resolve({ outcome: 'slot_not_offered' } as BookingResult) }),
+    );
+
+    expect(result).toMatchObject({ payload: { booked: false } });
+    expect((result as unknown as { payload: { reason: string } }).payload.reason).toContain('no longer available');
+  });
+
+  it('a CRM appointment failure → booked:false with an actionable reason', async () => {
+    const raw = body('book_consultation', BOOK_ARGS);
+
+    const result = await processBookingFunction(
+      input(raw),
+      deps({ book: () => Promise.resolve({ outcome: 'failed', reason: 'crm 500' } as BookingResult) }),
+    );
+
+    expect(result).toMatchObject({ payload: { booked: false } });
+    expect((result as unknown as { payload: { reason: string } }).payload.reason).toContain('could not complete');
+  });
+
+  it('an arbitrary lead_id in args is ignored; the bound lead is used', async () => {
+    const book = bookMock();
+    const raw = body('book_consultation', { ...BOOK_ARGS, lead_id: 'attacker-lead' });
+
+    await processBookingFunction(input(raw), deps({ book }));
+
+    expect(book.mock.calls[0]![0].leadId).toBe(LEAD_ID);
+    expect(book.mock.calls[0]![0].leadId).not.toBe('attacker-lead');
+  });
+
+  it('an unknown call id → unknown_call (controller maps to 403)', async () => {
+    const raw = body('book_consultation', BOOK_ARGS);
+
+    const result = await processBookingFunction(
+      input(raw),
+      deps({ findCallByProviderId: () => Promise.resolve(null) }),
+    );
+
+    expect(result.status).toBe('unknown_call');
+  });
+});

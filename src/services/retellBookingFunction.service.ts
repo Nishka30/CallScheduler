@@ -1,3 +1,4 @@
+import type { z } from 'zod';
 import { logger } from '../lib/logger.js';
 import { verifyRetellSignature } from '../integrations/retell/webhookVerify.js';
 import {
@@ -74,7 +75,12 @@ export interface BookingFunctionDeps {
   /** Resolves the authoritative lead for a provider call id (server-side binding). */
   findCallByProviderId?: (
     callId: string,
-  ) => Promise<{ leadId: string; personKey?: string | null; callRecordId?: string } | null>;
+  ) => Promise<{
+    leadId: string;
+    personKey?: string | null;
+    callRecordId?: string;
+    customerTz?: string | null;
+  } | null>;
   /** Existing appointment for a lead, for idempotency. */
   findExistingAppointment?: (
     leadId: string,
@@ -169,6 +175,8 @@ export async function processBookingFunction(
   const functionName = request.name ?? undefined;
 
   // 3. Bind the lead SERVER-SIDE from the call id. Never from the args.
+  //    STRICT, PRODUCTION-ONLY: call.call_id -> CallRecord.retellCallId -> leadId.
+  //    A lead id in the args is never trusted; an unknown call id is refused (403).
   const findCall = deps.findCallByProviderId ?? defaultFindCall;
   const callRecord = await findCall(request.call.call_id);
   if (!callRecord) {
@@ -181,6 +189,10 @@ export async function processBookingFunction(
   const leadId = callRecord.leadId;
   const personKey = callRecord.personKey ?? undefined;
   const callRecordId = callRecord.callRecordId;
+  // Timezone captured during get_available_slots (persisted on the call record),
+  // used as a fallback if the book args omit it — so a valid, slot-based booking is
+  // never blocked merely because the model left `timezone` out of the book call.
+  const boundTimezone = callRecord.customerTz ?? undefined;
 
   // Defence in depth: if Retell echoes a lead id in metadata, it must agree.
   const metaLeadId = readMetaLeadId(request.call.metadata);
@@ -198,7 +210,7 @@ export async function processBookingFunction(
     return handleGetSlots(leadId, callRecordId, args, deps);
   }
   if (functionName === BOOK_FUNCTION) {
-    return handleBook(leadId, personKey, callRecordId, args, deps);
+    return handleBook(leadId, personKey, callRecordId, boundTimezone, args, deps);
   }
   return { status: 'bad_request', reason: `unsupported function "${functionName ?? '(none)'}"` };
 }
@@ -318,12 +330,16 @@ async function handleBook(
   leadId: string,
   personKey: string | undefined,
   callRecordId: string | undefined,
+  boundTimezone: string | undefined,
   rawArgs: Record<string, unknown>,
   deps: BookingFunctionDeps,
 ): Promise<BookingFunctionResult> {
   const parsed = bookArgsSchema.safeParse(rawArgs);
   if (!parsed.success) {
-    return bookError('I still need the confirmed destination and a chosen time before I can book.');
+    // Report the field that is ACTUALLY missing/invalid, not a blanket message —
+    // so the agent knows exactly what to supply (see the earlier misleading
+    // "need destination and time" when only the timezone was absent).
+    return bookError(describeBookArgsError(parsed.error));
   }
   const args = parsed.data;
 
@@ -332,12 +348,15 @@ async function handleBook(
     return bookError('Please confirm the destination and time with the customer before booking.');
   }
 
-  // Normalise the timezone to an IANA id (used for both availability and the
-  // booking's customer_tz). The chosen `starts_at` is a UTC instant and is never
-  // altered by this. Unknown timezone → ask, do not book.
-  const tz = normalizeTimezone(args.timezone);
+  // Timezone is used ONLY for the booking's `customer_tz` (never to alter the chosen
+  // `starts_at`, which stays the exact UTC instant from get_available_slots). Prefer
+  // the arg; otherwise fall back to the timezone already captured during
+  // get_available_slots (persisted on the call record). Only ask if neither is usable.
+  const tz = resolveBookingTimezone(args.timezone, boundTimezone);
   if (tz === null) {
-    return bookError('I need the customer’s timezone in a standard form before I can book.');
+    return bookError(
+      'I need the customer’s timezone in a standard form (for example “Asia/Kolkata”) before I can book.',
+    );
   }
 
   // Persist the same confirmed timezone used for the booking.
@@ -466,6 +485,47 @@ function bookError(message: string): BookingFunctionResult {
   return { status: 'ok', operation: 'book', payload: { booked: false, reason: message } };
 }
 
+/**
+ * Turns a `bookArgsSchema` failure into a PRECISE, actionable message naming the
+ * field that is actually missing/invalid — never the old blanket "need destination
+ * and time" (which was returned even when only the timezone was absent).
+ */
+function describeBookArgsError(error: z.ZodError): string {
+  const fields = new Set(error.issues.map((issue) => String(issue.path[0] ?? '')));
+  if (fields.has('confirmed_destination')) {
+    return 'I still need the confirmed destination before I can book.';
+  }
+  if (fields.has('starts_at')) {
+    return 'I still need the chosen time before I can book. Use the exact time returned by get_available_slots.';
+  }
+  if (fields.has('meeting_type')) {
+    return 'That consultation type is not supported.';
+  }
+  if (fields.has('timezone')) {
+    return 'I need the customer’s timezone in a standard form before I can book.';
+  }
+  return 'I still need the confirmed destination and a chosen time before I can book.';
+}
+
+/**
+ * Resolves the booking's `customer_tz`: the arg when it normalises to a valid IANA
+ * zone, otherwise the timezone captured during `get_available_slots` (persisted on
+ * the call record). Never alters `starts_at`. Returns null only when neither is usable.
+ */
+function resolveBookingTimezone(
+  argTimezone: string | undefined,
+  boundTimezone: string | undefined,
+): string | null {
+  if (argTimezone) {
+    const normalized = normalizeTimezone(argTimezone);
+    if (normalized) return normalized;
+  }
+  if (boundTimezone) {
+    return normalizeTimezone(boundTimezone) ?? boundTimezone;
+  }
+  return null;
+}
+
 function readMetaLeadId(metadata: Record<string, unknown> | null | undefined): string | undefined {
   if (!metadata) return undefined;
   const value = metadata['leadId'] ?? metadata['lead_id'];
@@ -474,10 +534,20 @@ function readMetaLeadId(metadata: Record<string, unknown> | null | undefined): s
 
 async function defaultFindCall(
   callId: string,
-): Promise<{ leadId: string; personKey?: string | null; callRecordId?: string } | null> {
+): Promise<{
+  leadId: string;
+  personKey?: string | null;
+  callRecordId?: string;
+  customerTz?: string | null;
+} | null> {
   const record = await findByRetellCallId(callId);
   return record
-    ? { leadId: record.leadId, personKey: record.personKey, callRecordId: record.id }
+    ? {
+        leadId: record.leadId,
+        personKey: record.personKey,
+        callRecordId: record.id,
+        customerTz: record.customerTz,
+      }
     : null;
 }
 
