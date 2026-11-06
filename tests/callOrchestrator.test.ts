@@ -16,6 +16,7 @@ vi.mock('../src/repositories/leadProcessing.repository.js', () => ({
   markCalling: vi.fn(),
   completeProcessing: vi.fn(),
   finalizeRejectedEligibleLead: vi.fn(),
+  finalizeHoldExpired: vi.fn(),
 }));
 
 vi.mock('../src/repositories/callRecord.repository.js', () => ({
@@ -29,11 +30,23 @@ vi.mock('../src/services/callNoteDelivery.service.js', () => ({
   deliverCallNote: (...args: unknown[]) => deliverCallNote(...args),
 }));
 
+// Stub the persistent review-note enqueue so the orchestrator never touches the
+// DB/CRM for notifications during tests.
+vi.mock('../src/services/reviewNoteDelivery.service.js', () => ({
+  enqueueReviewNote: vi.fn().mockResolvedValue(true),
+}));
+
 const { initiateCallForLead } = await import('../src/services/callOrchestrator.service.js');
-const { claimEligibleLead, markCalling, completeProcessing, finalizeRejectedEligibleLead } =
-  await import('../src/repositories/leadProcessing.repository.js');
+const {
+  claimEligibleLead,
+  markCalling,
+  completeProcessing,
+  finalizeRejectedEligibleLead,
+  finalizeHoldExpired,
+} = await import('../src/repositories/leadProcessing.repository.js');
 const { recordCallAttempt, attachProviderCallId, markCallAttemptFailed } =
   await import('../src/repositories/callRecord.repository.js');
+const { enqueueReviewNote } = await import('../src/services/reviewNoteDelivery.service.js');
 
 const NOW = new Date('2026-10-16T12:00:00.000Z');
 const FUTURE_HOLD = '2026-10-16T12:05:00.000Z';
@@ -116,6 +129,7 @@ beforeEach(() => {
   vi.mocked(attachProviderCallId).mockResolvedValue({ id: 'call-1' } as never);
   vi.mocked(markCallAttemptFailed).mockResolvedValue({ id: 'call-1', leadId: 'lead-1' } as never);
   vi.mocked(finalizeRejectedEligibleLead).mockResolvedValue(true);
+  vi.mocked(finalizeHoldExpired).mockResolvedValue('skipped');
   deliverCallNote.mockResolvedValue('sent');
 });
 
@@ -409,23 +423,25 @@ describe('initiateCallForLead — Oct 20 crm_route / ownership gate', () => {
 });
 
 describe('initiateCallForLead — persists the final rejection (no stuck ELIGIBLE)', () => {
-  it('persists SKIPPED/hold_expired when the caller hold is expired', async () => {
+  it('persists the hold-expired outcome (retry-aware) when the caller hold is expired', async () => {
     const deps = fakeClients(detail({ caller_hold_until: EXPIRED_HOLD }));
 
     const result = await initiateCallForLead('lead-1', deps);
 
     expect(result.outcome).toBe('rejected_hold_expired');
-    expect(finalizeRejectedEligibleLead).toHaveBeenCalledWith(
+    // finalizeHoldExpired decides SKIP (first attempt) vs RETRY_PENDING (a retry)
+    // from the DB row; the orchestrator just hands it the schedule inputs.
+    expect(finalizeHoldExpired).toHaveBeenCalledWith(
       'lead-1',
-      ProcessingStatus.SKIPPED,
-      'hold_expired',
-      expect.any(String),
+      expect.any(Date),
+      expect.any(Number),
       expect.any(Date),
     );
+    expect(finalizeRejectedEligibleLead).not.toHaveBeenCalled();
     expect(deps.retellClient.createPhoneCall).not.toHaveBeenCalled();
   });
 
-  it('persists SKIPPED/hold_expired when the hold lapses during the person fetch', async () => {
+  it('persists the hold-expired outcome when the hold lapses during the person fetch', async () => {
     let clock = new Date('2026-10-16T12:00:00.000Z');
     const deps = fakeClients(detail({ caller_hold_until: '2026-10-16T12:01:00.000Z' }));
     deps.now = () => clock;
@@ -437,11 +453,10 @@ describe('initiateCallForLead — persists the final rejection (no stuck ELIGIBL
     const result = await initiateCallForLead('lead-1', deps);
 
     expect(result.outcome).toBe('rejected_hold_expired');
-    expect(finalizeRejectedEligibleLead).toHaveBeenCalledWith(
+    expect(finalizeHoldExpired).toHaveBeenCalledWith(
       'lead-1',
-      ProcessingStatus.SKIPPED,
-      'hold_expired',
-      expect.any(String),
+      expect.any(Date),
+      expect.any(Number),
       expect.any(Date),
     );
   });
@@ -531,6 +546,26 @@ describe('initiateCallForLead — persists the final rejection (no stuck ELIGIBL
       expect.any(String),
       expect.any(Date),
     );
+  });
+
+  it('enqueues a CRM review note when a NEEDS_REVIEW rejection is persisted (phone verdict unreadable)', async () => {
+    const deps = fakeClients(detail({}, { phone: { nonsense: true } }));
+
+    await initiateCallForLead('lead-1', deps);
+
+    expect(enqueueReviewNote).toHaveBeenCalledWith(
+      'lead-1',
+      'phone_verdict_unreadable',
+      expect.any(String),
+    );
+  });
+
+  it('does NOT enqueue a review note for a SKIPPED rejection (e.g. hold expired)', async () => {
+    const deps = fakeClients(detail({ caller_hold_until: EXPIRED_HOLD }));
+
+    await initiateCallForLead('lead-1', deps);
+
+    expect(enqueueReviewNote).not.toHaveBeenCalled();
   });
 
   it('does NOT persist a rejection on the happy path (lead stays claimable and is called)', async () => {

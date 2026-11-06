@@ -543,6 +543,35 @@ export async function findCallsWithUndeliveredNotes(limit: number): Promise<Call
   });
 }
 
+/**
+ * Terminal call records whose CRM note still needs delivering and is eligible for a
+ * RETRY now: note not yet `sent` (null or `failed`), under the attempt cap, and the
+ * backoff since the last attempt has elapsed (or none yet). Oldest first.
+ *
+ * Bounds the redelivery sweep so a permanently-failing note (attempts >= cap) is
+ * left `failed` and a just-attempted one waits out its backoff — never a hot loop.
+ */
+export async function findNotesForRedelivery(
+  now: Date,
+  maxAttempts: number,
+  backoffMs: number,
+  limit: number,
+): Promise<CallRecord[]> {
+  const backoffCutoff = new Date(now.getTime() - backoffMs);
+  return prisma.callRecord.findMany({
+    where: {
+      status: { in: [...TERMINAL_STATUSES] },
+      noteAttempts: { lt: maxAttempts },
+      AND: [
+        { OR: [{ noteStatus: null }, { noteStatus: 'failed' }] },
+        { OR: [{ noteLastAttemptAt: null }, { noteLastAttemptAt: { lte: backoffCutoff } }] },
+      ],
+    },
+    orderBy: { endedAt: 'asc' },
+    take: limit,
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Read access for the authenticated call-history API
 // ---------------------------------------------------------------------------

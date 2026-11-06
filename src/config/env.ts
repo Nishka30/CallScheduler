@@ -302,6 +302,95 @@ const envSchema = z.object({
 
   /** Max NEEDS_REVIEW rows read from the local DB per sweep to consider. */
   LEAD_REEVAL_BATCH_SIZE: z.coerce.number().int().min(1).max(500).default(50),
+
+  // -------------------------------------------------------------------------
+  // No-answer call retry (persistent, hold-aware). COMPLETELY SEPARATE from the
+  // NEEDS_REVIEW re-evaluation above: this re-DIALS a lead whose call was not
+  // answered, it does not re-evaluate eligibility data.
+  // -------------------------------------------------------------------------
+
+  /**
+   * When true, after each poll cycle the worker also runs the no-answer retry
+   * sweep: a lead whose call ended NO_ANSWER is re-dialled (subject to an active
+   * caller hold) up to LEAD_RETRY_MAX_ATTEMPTS total attempts. Default OFF: no
+   * lead is ever retried unless this is explicitly enabled. Dialling still also
+   * requires RETELL_CALLING_ENABLED.
+   */
+  LEAD_RETRY_ENABLED: booleanFlag('false'),
+
+  /** Total call attempts allowed per lead, INCLUDING the first call (so 5 = first + 4 retries). */
+  LEAD_RETRY_MAX_ATTEMPTS: z.coerce.number().int().min(1).max(10).default(5),
+
+  /** Delay after a NO_ANSWER before the next attempt is due. Default 5 minutes. */
+  LEAD_RETRY_INTERVAL_MS: z.coerce.number().int().min(60_000).max(86_400_000).default(300_000),
+
+  /**
+   * How long to wait before re-checking a retry whose caller hold was not active
+   * when it came due (waiting for the CRM to re-issue a hold). Default 5 minutes.
+   */
+  LEAD_RETRY_RECHECK_MS: z.coerce.number().int().min(60_000).max(86_400_000).default(300_000),
+
+  /**
+   * Maximum total time to keep waiting for a valid caller hold, measured from the
+   * last actual dial. After this elapses with no hold, the lead moves to
+   * NEEDS_REVIEW (reason `retry_hold_unavailable`) so the RM is notified — it is
+   * NOT silently completed. Default 24 hours.
+   */
+  LEAD_RETRY_MAX_WAIT_MS: z.coerce
+    .number()
+    .int()
+    .min(60_000)
+    .max(604_800_000)
+    .default(86_400_000),
+
+  /** Max retries attempted in a single sweep (bounds Lead API + Retell load). */
+  LEAD_RETRY_MAX_PER_CYCLE: z.coerce.number().int().min(1).max(100).default(10),
+
+  /** Max RETRY_PENDING rows read from the local DB per sweep to consider. */
+  LEAD_RETRY_BATCH_SIZE: z.coerce.number().int().min(1).max(500).default(50),
+
+  // -------------------------------------------------------------------------
+  // Reconciliation sweeps (recover leads/notes stranded by crashes, missing
+  // webhooks, or transient failures). Default OFF; dialling still requires
+  // RETELL_CALLING_ENABLED, so enabling this never places a call on its own.
+  // -------------------------------------------------------------------------
+
+  /** Master switch for the stuck-state + ELIGIBLE-backstop + note redelivery sweeps. */
+  LEAD_RECONCILE_ENABLED: booleanFlag('false'),
+
+  /**
+   * A lead stuck in CALLING longer than this is reconciled to NEEDS_REVIEW
+   * (`call_unreconciled`) — a safe fallback that never claims the call completed
+   * and never auto-redials (the call may have connected). Default 30 minutes.
+   */
+  LEAD_STUCK_CALLING_MS: z.coerce.number().int().min(60_000).max(86_400_000).default(1_800_000),
+
+  /**
+   * A lead stuck in PROCESSING (claimed, crashed before it dialled) longer than
+   * this is returned to ELIGIBLE for another safe attempt. No call was placed in
+   * PROCESSING, so this cannot double-dial. Default 10 minutes.
+   */
+  LEAD_STUCK_PROCESSING_MS: z.coerce.number().int().min(60_000).max(86_400_000).default(600_000),
+
+  /**
+   * A lead left ELIGIBLE but not called (e.g. a transient lead_unavailable at dial
+   * time, or a crash mid-retry) for longer than this is re-handed to the
+   * orchestrator — the authoritative gates (hold, CRM, phone, claim) still apply.
+   * Default 5 minutes, so the poll's inline call attempt runs first.
+   */
+  LEAD_ELIGIBLE_BACKSTOP_MS: z.coerce.number().int().min(60_000).max(86_400_000).default(300_000),
+
+  /** Max reconciliation actions per sweep (bounds API/DB load). */
+  LEAD_RECONCILE_MAX_PER_CYCLE: z.coerce.number().int().min(1).max(200).default(20),
+
+  /** Max rows read from the local DB per reconciliation sweep. */
+  LEAD_RECONCILE_BATCH_SIZE: z.coerce.number().int().min(1).max(1000).default(100),
+
+  /** Hard cap on CRM note delivery attempts before the note is left failed. */
+  LEAD_NOTE_RETRY_MAX_ATTEMPTS: z.coerce.number().int().min(1).max(20).default(5),
+
+  /** Minimum delay between CRM note delivery attempts. Default 5 minutes. */
+  LEAD_NOTE_RETRY_BACKOFF_MS: z.coerce.number().int().min(60_000).max(86_400_000).default(300_000),
 });
 
 export type Env = z.infer<typeof envSchema>;

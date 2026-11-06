@@ -16,6 +16,7 @@ import {
   markCalling,
   completeProcessing,
   finalizeRejectedEligibleLead,
+  finalizeHoldExpired,
 } from '../repositories/leadProcessing.repository.js';
 import {
   recordCallAttempt,
@@ -23,6 +24,7 @@ import {
   markCallAttemptFailed,
 } from '../repositories/callRecord.repository.js';
 import { deliverCallNote } from './callNoteDelivery.service.js';
+import { enqueueReviewNote } from './reviewNoteDelivery.service.js';
 import { ProcessingStatus } from '@prisma/client';
 
 /**
@@ -191,16 +193,11 @@ export async function initiateCallForLead(
   const holdRaw =
     typeof current['caller_hold_until'] === 'string' ? current['caller_hold_until'] : null;
   if (!isHoldActive(evaluateCallWindow(holdRaw, now()))) {
-    // The call window has closed (and the CRM forwards such leads to the legacy
-    // centre). Calling late is forbidden, so this is terminal -> SKIPPED. We do
-    // NOT extend the hold and never make an expired lead callable.
-    await persistEligibleRejection(
-      leadId,
-      ProcessingStatus.SKIPPED,
-      'hold_expired',
-      'caller hold is not active',
-      now(),
-    );
+    // The call window is not open. We never extend the hold or dial late. For a
+    // first attempt this is terminal (SKIPPED); for a no-answer RETRY it returns
+    // to RETRY_PENDING to await a re-issued hold WITHOUT consuming an attempt —
+    // finalizeHoldExpired decides from the row.
+    await persistHoldExpired(leadId, config, now());
     return { outcome: 'rejected_hold_expired', leadId, reason: 'caller hold is not active' };
   }
 
@@ -234,13 +231,7 @@ export async function initiateCallForLead(
       { leadId },
       'call orchestrator: caller hold lapsed before dialling; not placing a call',
     );
-    await persistEligibleRejection(
-      leadId,
-      ProcessingStatus.SKIPPED,
-      'hold_expired',
-      'caller hold lapsed before dialling',
-      now(),
-    );
+    await persistHoldExpired(leadId, config, now());
     return {
       outcome: 'rejected_hold_expired',
       leadId,
@@ -356,10 +347,44 @@ async function persistEligibleRejection(
       },
       'call orchestrator: lead reached the calling stage but was not called; rejection persisted',
     );
+    // Record a persistent CRM review-note intent for a freshly-applied NEEDS_REVIEW
+    // (the review-note sweep delivers it reliably). A SKIPPED rejection is a terminal
+    // business decision and is NOT surfaced here.
+    if (applied && status === ProcessingStatus.NEEDS_REVIEW) {
+      await enqueueReviewNote(leadId, reason, detail);
+    }
   } catch (error) {
     logger.warn(
       { leadId, reason, err: errName(error) },
       'call orchestrator: could not persist calling-stage rejection; lead left unchanged',
+    );
+  }
+}
+
+/**
+ * Persists the hold-expired outcome for an ELIGIBLE lead the orchestrator refused
+ * because the caller hold is not active. `finalizeHoldExpired` decides, from the
+ * row, between RETRY_PENDING (a no-answer retry awaiting a re-issued hold — no
+ * attempt consumed) and SKIPPED (a first attempt or an exhausted one). Best-effort:
+ * a failure is logged, never thrown, and never changes the returned outcome.
+ */
+async function persistHoldExpired(leadId: string, config: Env, now: Date): Promise<void> {
+  try {
+    const nextRetryAt = new Date(now.getTime() + config.LEAD_RETRY_RECHECK_MS);
+    const result = await finalizeHoldExpired(
+      leadId,
+      nextRetryAt,
+      config.LEAD_RETRY_MAX_ATTEMPTS,
+      now,
+    );
+    logger.info(
+      { leadId, result },
+      'call orchestrator: caller hold not active; hold-expired outcome persisted',
+    );
+  } catch (error) {
+    logger.warn(
+      { leadId, err: errName(error) },
+      'call orchestrator: could not persist hold-expired outcome; lead left unchanged',
     );
   }
 }

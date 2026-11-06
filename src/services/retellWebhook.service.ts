@@ -1,4 +1,5 @@
 import { CallStatus, type Prisma, type CallRecord } from '@prisma/client';
+import { env, type Env } from '../config/env.js';
 import { logger } from '../lib/logger.js';
 import { verifyRetellSignature } from '../integrations/retell/webhookVerify.js';
 import {
@@ -10,7 +11,11 @@ import {
   applyWebhookCallEvent,
   type WebhookCallUpdate,
 } from '../repositories/callRecord.repository.js';
-import { completeCallingLead } from '../repositories/leadProcessing.repository.js';
+import {
+  completeCallingLead,
+  scheduleRetryOrComplete,
+  completeReconciledCall,
+} from '../repositories/leadProcessing.repository.js';
 import { deliverCallNote } from './callNoteDelivery.service.js';
 
 /** Call statuses that mean the attempt is finished (telephony-terminal). */
@@ -41,8 +46,10 @@ export interface ProcessWebhookInput {
   signature: string | undefined;
   /** Verification secret — the Retell API key (Retell signs with it). */
   apiKey: string | undefined;
-  /** Injected for tests; passed to the replay-window check. */
+  /** Injected for tests; passed to the replay-window check and retry scheduling. */
   now?: number;
+  /** Config override (defaults to the process env). */
+  config?: Env;
 }
 
 /**
@@ -151,7 +158,12 @@ export async function processRetellWebhook(input: ProcessWebhookInput): Promise<
   // update above: a failure here is logged but never fails the webhook (the record
   // is already persisted and a later event / reaper can retry), and a duplicate or
   // late terminal event is a safe, status-guarded no-op.
-  await completeLeadIfCallTerminal(result.record, call.call_id);
+  await completeLeadIfCallTerminal(
+    result.record,
+    call.call_id,
+    input.config ?? env,
+    input.now ?? Date.now(),
+  );
 
   // Record the call in the CRM (a note for EVERY outcome), once. Secondary to the
   // local record: it never fails the webhook, and the local record is already
@@ -221,17 +233,53 @@ async function deliverCallNoteIfTerminal(
 async function completeLeadIfCallTerminal(
   record: CallRecord | undefined,
   callId: string,
+  config: Env,
+  nowMs: number,
 ): Promise<void> {
   if (!record || !TERMINAL_CALL_STATUSES.has(record.status)) return;
 
   try {
-    const completed = await completeCallingLead(record.leadId);
-    logger.info(
-      { callId, leadId: record.leadId, completed },
-      completed
-        ? 'lead processing completed after terminal call event'
-        : 'terminal call event: lead already finished or advanced; no transition applied',
-    );
+    // No-answer retry (only when enabled): instead of finishing the lead, schedule
+    // another attempt (or finish it once the attempt cap is reached). Every other
+    // terminal outcome — including BUSY, VOICEMAIL and any failure — keeps the
+    // existing CALLING -> COMPLETED behavior and is never retried here.
+    let applied: boolean;
+    if (config.LEAD_RETRY_ENABLED && record.status === CallStatus.NO_ANSWER) {
+      const nextRetryAt = new Date(nowMs + config.LEAD_RETRY_INTERVAL_MS);
+      const result = await scheduleRetryOrComplete(
+        record.leadId,
+        nextRetryAt,
+        config.LEAD_RETRY_MAX_ATTEMPTS,
+        new Date(nowMs),
+      );
+      applied = result !== 'noop';
+      logger.info(
+        { callId, leadId: record.leadId, result },
+        'no-answer terminal event: retry scheduling applied',
+      );
+    } else {
+      applied = await completeCallingLead(record.leadId);
+      logger.info(
+        { callId, leadId: record.leadId, completed: applied },
+        applied
+          ? 'lead processing completed after terminal call event'
+          : 'terminal call event: lead already finished or advanced; no transition applied',
+      );
+    }
+
+    // Late terminal webhook for a call the reaper already reconciled to
+    // NEEDS_REVIEW (`call_unreconciled`): the real outcome is now known and the
+    // CallRecord was enriched above, so finish the lead rather than leaving it in
+    // review forever. This never initiates a call.
+    if (!applied) {
+      const resolved = await completeReconciledCall(record.leadId, new Date(nowMs));
+      if (resolved) {
+        logger.info(
+          { callId, leadId: record.leadId },
+          'reconciled (call_unreconciled) lead resolved by a late terminal webhook',
+        );
+      }
+    }
   } catch (error) {
     // Do not fail the webhook: the call record is already updated. Log for a reaper
     // / later event to reconcile.

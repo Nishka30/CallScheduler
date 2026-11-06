@@ -2,6 +2,7 @@ import { createHmac } from 'node:crypto';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { CallOutcome, CallStatus } from '@prisma/client';
 import { verifyRetellSignature } from '../src/integrations/retell/webhookVerify.js';
+import { parseEnv } from '../src/config/env.js';
 
 vi.mock('../src/lib/prisma.js', () => ({
   prisma: { $queryRaw: vi.fn() },
@@ -15,8 +16,12 @@ vi.mock('../src/repositories/callRecord.repository.js', () => ({
 }));
 
 const completeCallingLead = vi.fn();
+const scheduleRetryOrComplete = vi.fn();
+const completeReconciledCall = vi.fn();
 vi.mock('../src/repositories/leadProcessing.repository.js', () => ({
   completeCallingLead: (...args: unknown[]) => completeCallingLead(...args),
+  scheduleRetryOrComplete: (...args: unknown[]) => scheduleRetryOrComplete(...args),
+  completeReconciledCall: (...args: unknown[]) => completeReconciledCall(...args),
 }));
 
 const deliverCallNote = vi.fn();
@@ -40,7 +45,74 @@ function sign(body: string, key: string, ts: number): string {
 beforeEach(() => {
   vi.clearAllMocks();
   completeCallingLead.mockResolvedValue(true);
+  scheduleRetryOrComplete.mockResolvedValue('scheduled');
+  completeReconciledCall.mockResolvedValue(false);
   deliverCallNote.mockResolvedValue('sent');
+});
+
+const retryConfig = () =>
+  parseEnv({
+    DATABASE_URL: 'postgresql://u:p@localhost:5432/db',
+    LEAD_RETRY_ENABLED: 'true',
+    LEAD_RETRY_INTERVAL_MS: '300000',
+    LEAD_RETRY_MAX_ATTEMPTS: '5',
+  });
+
+describe('processRetellWebhook — no-answer retry (when LEAD_RETRY_ENABLED)', () => {
+  const sign2 = (body: string) => sign(body, KEY, NOW);
+  const noAnswer = () =>
+    JSON.stringify({
+      event: 'call_ended',
+      call: { call_id: 'call_1', disconnection_reason: 'dial_no_answer' },
+    });
+
+  it('schedules a retry instead of completing the lead on NO_ANSWER', async () => {
+    applyWebhookCallEvent.mockResolvedValue({
+      matched: true,
+      changed: true,
+      record: { leadId: 'lead-1', status: CallStatus.NO_ANSWER },
+    });
+    const body = noAnswer();
+
+    await processRetellWebhook({
+      rawBody: body,
+      signature: sign2(body),
+      apiKey: KEY,
+      now: NOW,
+      config: retryConfig(),
+    });
+
+    expect(scheduleRetryOrComplete).toHaveBeenCalledTimes(1);
+    const [leadId, nextRetryAt, maxAttempts] = scheduleRetryOrComplete.mock.calls[0]!;
+    expect(leadId).toBe('lead-1');
+    expect(maxAttempts).toBe(5);
+    expect(nextRetryAt).toBeInstanceOf(Date);
+    expect((nextRetryAt as Date).getTime()).toBe(NOW + 300000); // now + 5 min
+    expect(completeCallingLead).not.toHaveBeenCalled();
+  });
+
+  it('still COMPLETES the lead (not a retry) for BUSY, even when retry is enabled', async () => {
+    applyWebhookCallEvent.mockResolvedValue({
+      matched: true,
+      changed: true,
+      record: { leadId: 'lead-1', status: CallStatus.BUSY },
+    });
+    const body = JSON.stringify({
+      event: 'call_ended',
+      call: { call_id: 'call_1', disconnection_reason: 'dial_busy' },
+    });
+
+    await processRetellWebhook({
+      rawBody: body,
+      signature: sign2(body),
+      apiKey: KEY,
+      now: NOW,
+      config: retryConfig(),
+    });
+
+    expect(scheduleRetryOrComplete).not.toHaveBeenCalled();
+    expect(completeCallingLead).toHaveBeenCalledWith('lead-1');
+  });
 });
 
 describe('verifyRetellSignature', () => {
@@ -281,6 +353,19 @@ describe('processRetellWebhook — terminal lead-processing transition', () => {
 
     expect(result.status).toBe('unmatched');
     expect(completeCallingLead).not.toHaveBeenCalled();
+  });
+
+  it('resolves a reconciled (call_unreconciled) lead when its late terminal webhook arrives', async () => {
+    // The CALLING-guarded transition no-ops (lead already reaped to NEEDS_REVIEW);
+    // the fallback completes the reconciled lead. No call is initiated.
+    applyWebhookCallEvent.mockResolvedValue(terminal(CallStatus.COMPLETED));
+    completeCallingLead.mockResolvedValue(false); // not CALLING anymore
+    completeReconciledCall.mockResolvedValue(true);
+
+    const result = await run(call());
+
+    expect(result.status).toBe('processed');
+    expect(completeReconciledCall).toHaveBeenCalledWith('lead-1', expect.any(Date));
   });
 
   it('acknowledges the webhook even if the lead transition fails (logged, never thrown)', async () => {

@@ -19,6 +19,14 @@ import {
 } from './leadEligibility.service.js';
 import { buildLeadCallContext, describeContextForLog } from './leadContext.service.js';
 import { initiateCallForLead, type OrchestratorResult } from './callOrchestrator.service.js';
+import { enqueueReviewNote } from './reviewNoteDelivery.service.js';
+
+/** Records a persistent CRM review-note intent when a lead enters NEEDS_REVIEW. Injectable for tests. */
+export type NeedsReviewNotifier = (
+  leadId: string,
+  reason: string,
+  detail?: string,
+) => Promise<unknown>;
 
 /** Signature of the call step, injectable so tests can observe/stub it. */
 export type CallInitiator = (
@@ -52,6 +60,8 @@ export interface PollOptions {
   fetchContext?: boolean;
   /** Call step; defaults to the real orchestrator. Injected in tests. */
   callInitiator?: CallInitiator;
+  /** CRM NEEDS_REVIEW notifier; defaults to the real one. Injected in tests. */
+  needsReviewNotifier?: NeedsReviewNotifier;
 }
 
 /**
@@ -73,6 +83,9 @@ export async function runLeadPoll(options: PollOptions = {}): Promise<PollSummar
   const client = options.client ?? new LeadApiClient({}, config);
   const fetchContext = options.fetchContext ?? true;
   const callInitiator = options.callInitiator ?? initiateCallForLead;
+  const needsReviewNotifier =
+    options.needsReviewNotifier ??
+    ((leadId, reason, detail) => enqueueReviewNote(leadId, reason, detail));
 
   const cursorRow = await getOrCreateCursor(LEAD_API_SOURCE);
   const bootstrap = isBootstrapPending(cursorRow);
@@ -133,6 +146,7 @@ export async function runLeadPoll(options: PollOptions = {}): Promise<PollSummar
         config,
         fetchContext,
         callInitiator,
+        needsReviewNotifier,
         now: now(),
         summary,
       });
@@ -211,6 +225,7 @@ interface RowContext {
   config: Env;
   fetchContext: boolean;
   callInitiator: CallInitiator;
+  needsReviewNotifier: NeedsReviewNotifier;
   now: Date;
   summary: PollSummary;
 }
@@ -251,6 +266,20 @@ async function processRow(row: LeadListRow, ctx: RowContext): Promise<string> {
 
   if (result.applied) {
     ctx.summary.decisionsApplied += 1;
+    // When a lead FIRST enters NEEDS_REVIEW, surface it to the CRM (best-effort).
+    // The local decision is already persisted above, so a notification failure can
+    // never lose or flip it; the notifier itself never throws, but we guard anyway
+    // so a CRM problem can never abort the poll run.
+    if (decision.outcome === 'NEEDS_REVIEW') {
+      try {
+        await ctx.needsReviewNotifier(leadId, decision.reason, decision.detail);
+      } catch (error) {
+        logger.warn(
+          { leadId, reason: decision.reason, err: error instanceof Error ? error.name : 'unknown' },
+          'NEEDS_REVIEW CRM notification raised unexpectedly; decision retained',
+        );
+      }
+    }
   } else {
     // Already judged on an earlier page or poll. Its original decision stands,
     // so a later note or status change cannot promote an old lead.

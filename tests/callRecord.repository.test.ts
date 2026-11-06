@@ -44,6 +44,7 @@ const {
   applyWebhookCallEvent,
   listCallRecords,
   getCallRecordDetail,
+  findNotesForRedelivery,
 } = await import('../src/repositories/callRecord.repository.js');
 
 function row(overrides: Record<string, unknown> = {}): Record<string, unknown> {
@@ -514,5 +515,26 @@ describe('getCallRecordDetail (read API)', () => {
   it('returns null when nothing matches', async () => {
     callRecord.findUnique.mockResolvedValue(null);
     expect(await getCallRecordDetail('call_missing')).toBeNull();
+  });
+});
+
+describe('findNotesForRedelivery', () => {
+  it('selects terminal calls with an undelivered note, under the attempt cap and past the backoff', async () => {
+    callRecord.findMany.mockResolvedValue([]);
+    const now = new Date('2026-08-01T12:00:00.000Z');
+
+    await findNotesForRedelivery(now, 5, 300_000, 50);
+
+    const call = callRecord.findMany.mock.calls[0]![0] as {
+      where: Record<string, unknown>;
+      take: number;
+    };
+    expect(call.where).toMatchObject({
+      status: { in: expect.any(Array) },
+      noteAttempts: { lt: 5 },
+    });
+    // Undelivered = noteStatus null or 'failed'.
+    expect(JSON.stringify(call.where)).toContain('failed');
+    expect(call.take).toBe(50);
   });
 });

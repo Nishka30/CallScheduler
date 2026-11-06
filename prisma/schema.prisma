@@ -26,6 +26,7 @@ enum ProcessingStatus {
   CALLING // an outbound call attempt is in flight
   COMPLETED // workflow finished for this lead
   FAILED // terminal failure; requires an explicit retry decision
+  RETRY_PENDING // a call did not connect (NO_ANSWER); another attempt is scheduled, subject to an active caller hold
 }
 
 /// Lifecycle of a single outbound call attempt.
@@ -92,6 +93,30 @@ model LeadProcessing {
   /// When the eligibility decision was last taken.
   decidedAt DateTime? @db.Timestamptz(3)
 
+  /// When the next no-answer retry becomes due. Set only while `status` is
+  /// RETRY_PENDING; null otherwise. The retry sweeper picks up leads whose
+  /// `nextRetryAt` is in the past. Persistent so retries survive restarts.
+  nextRetryAt DateTime? @db.Timestamptz(3)
+
+  // --- CRM review-note delivery (for NEEDS_REVIEW + retry-hold-unavailable) ---
+  // Persistent delivery intent so a CRM review note is never lost on a transient
+  // failure or worker restart, and is sent at most once per (lead, reason).
+
+  /// null | pending | sent | failed. Null until a review note is enqueued.
+  reviewNoteStatus String? @db.VarChar(16)
+  /// The reason code the note was enqueued for (stable; not re-derived later).
+  reviewNoteReason String? @db.VarChar(64)
+  /// Short non-personal detail captured when the note was enqueued.
+  reviewNoteDetail String? @db.VarChar(300)
+  /// How many delivery attempts have been made.
+  reviewNoteAttempts Int @default(0)
+  /// When the next delivery attempt becomes due (backoff).
+  reviewNoteNextAttemptAt DateTime? @db.Timestamptz(3)
+  /// Sanitized failure category for the last attempt (never a raw body/PII).
+  reviewNoteError String? @db.VarChar(200)
+  /// When the review note was confirmed delivered.
+  reviewNoteSentAt DateTime? @db.Timestamptz(3)
+
   /// The `updated_at` of the lead row that produced the current decision.
   /// Lets us see that a later appearance was only an update, not a new inquiry.
   leadUpdatedAt DateTime? @db.Timestamptz(3)
@@ -105,6 +130,8 @@ model LeadProcessing {
   @@index([status, createdAt])
   @@index([claimedAt])
   @@index([decisionReason])
+  @@index([status, nextRetryAt])
+  @@index([reviewNoteStatus, reviewNoteNextAttemptAt])
   @@map("lead_processing")
 }
 

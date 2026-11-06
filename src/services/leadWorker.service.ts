@@ -4,6 +4,10 @@ import { prisma } from '../lib/prisma.js';
 import { sanitizeErrorMessage } from '../repositories/leadProcessing.repository.js';
 import { runLeadPoll, type PollSummary } from './leadPolling.service.js';
 import { buildReevaluationSweeper } from './leadReevaluationSweep.service.js';
+import { buildRetrySweeper } from './retrySweep.service.js';
+import { buildCallReconciliationSweeper } from './callReconciliation.service.js';
+import { buildNoteReconciliationSweeper } from './noteReconciliation.service.js';
+import { buildReviewNoteSweeper } from './reviewNoteDelivery.service.js';
 
 /**
  * Background worker that runs the EXISTING `runLeadPoll()` on a timer, so leads
@@ -257,8 +261,8 @@ export function startLeadWorker(config: Env = env): LeadWorker | null {
   if (active) return active;
 
   // Optional bounded/throttled NEEDS_REVIEW re-evaluation, after each poll.
-  const sweeper = buildReevaluationSweeper(config);
-  if (sweeper) {
+  const reevalSweeper = buildReevaluationSweeper(config);
+  if (reevalSweeper) {
     logger.info(
       {
         retryIntervalMs: config.LEAD_REEVAL_RETRY_INTERVAL_MS,
@@ -269,16 +273,70 @@ export function startLeadWorker(config: Env = env): LeadWorker | null {
     );
   }
 
+  // Optional persistent, hold-aware no-answer call retry, after each poll.
+  // COMPLETELY SEPARATE from the NEEDS_REVIEW re-evaluation above.
+  const retrySweeper = buildRetrySweeper(config);
+  if (retrySweeper) {
+    logger.info(
+      {
+        intervalMs: config.LEAD_RETRY_INTERVAL_MS,
+        maxAttempts: config.LEAD_RETRY_MAX_ATTEMPTS,
+        maxPerCycle: config.LEAD_RETRY_MAX_PER_CYCLE,
+      },
+      'lead worker: no-answer call retry enabled',
+    );
+  }
+
+  // Optional reconciliation sweeps (recover stranded leads + redeliver failed notes).
+  const callReconcileSweeper = buildCallReconciliationSweeper(config);
+  const noteReconcileSweeper = buildNoteReconciliationSweeper(config);
+  if (callReconcileSweeper || noteReconcileSweeper) {
+    logger.info(
+      {
+        stuckCallingMs: config.LEAD_STUCK_CALLING_MS,
+        stuckProcessingMs: config.LEAD_STUCK_PROCESSING_MS,
+        eligibleBackstopMs: config.LEAD_ELIGIBLE_BACKSTOP_MS,
+        noteRetryMaxAttempts: config.LEAD_NOTE_RETRY_MAX_ATTEMPTS,
+      },
+      'lead worker: reconciliation sweeps enabled',
+    );
+  }
+
+  // Compose the independent post-poll sweeps into one hook. Each is error-contained
+  // so a failure in one never prevents the others (or the poll cycle).
+  // Review-note delivery always runs when the worker runs: delivering a CRM review
+  // note is safe and must be reliable (it carries no dialling risk).
+  const reviewNoteSweeper = buildReviewNoteSweeper(config);
+
+  const sweeps: Array<{ label: string; run: () => Promise<unknown> }> = [];
+  if (reevalSweeper) sweeps.push({ label: 'NEEDS_REVIEW re-evaluation', run: () => reevalSweeper.runSweep() });
+  if (retrySweeper) sweeps.push({ label: 'no-answer retry', run: () => retrySweeper.runSweep() });
+  sweeps.push({ label: 'review-note delivery', run: () => reviewNoteSweeper.runSweep() });
+  if (callReconcileSweeper)
+    sweeps.push({ label: 'call reconciliation', run: () => callReconcileSweeper.runSweep() });
+  if (noteReconcileSweeper)
+    sweeps.push({ label: 'note reconciliation', run: () => noteReconcileSweeper.runSweep() });
+
+  const runSweep =
+    sweeps.length > 0
+      ? async () => {
+          for (const sweep of sweeps) {
+            try {
+              await sweep.run();
+            } catch (error) {
+              logger.error(
+                { err: sanitizeErrorMessage(error) },
+                `lead worker: ${sweep.label} sweep failed (cycle unaffected)`,
+              );
+            }
+          }
+        }
+      : undefined;
+
   const worker = new LeadWorker({
     intervalMs: config.LEAD_WORKER_INTERVAL_MS,
     maxBackoffMs: config.LEAD_WORKER_MAX_BACKOFF_MS,
-    ...(sweeper
-      ? {
-          runSweep: async () => {
-            await sweeper.runSweep();
-          },
-        }
-      : {}),
+    ...(runSweep ? { runSweep } : {}),
     ...(config.LEAD_WORKER_USE_DB_LOCK
       ? { withLock: advisoryLock(config.LEAD_WORKER_MAX_BACKOFF_MS) }
       : {}),

@@ -69,6 +69,12 @@ vi.mock('../src/lib/prisma.js', () => ({
   disconnectPrisma: vi.fn(),
 }));
 
+// Stub the CRM review-note enqueue so the DEFAULT path never touches the DB/CRM
+// during tests. Tests that assert on it inject their own spy instead.
+vi.mock('../src/services/reviewNoteDelivery.service.js', () => ({
+  enqueueReviewNote: vi.fn().mockResolvedValue(true),
+}));
+
 const { runLeadPoll } = await import('../src/services/leadPolling.service.js');
 
 function config(overrides: Record<string, string> = {}) {
@@ -487,6 +493,73 @@ describe('context retrieval', () => {
       decisionReason: 'awaiting_new_lead_rule_confirmation',
     });
     expect(client.getLead).not.toHaveBeenCalled();
+  });
+});
+
+describe('NEEDS_REVIEW CRM notification', () => {
+  it('notifies the CRM (with the real reason) when a lead is freshly marked NEEDS_REVIEW', async () => {
+    seedCursor();
+    const notifier = vi.fn().mockResolvedValue('sent');
+    // Unreadable phone verdict -> NEEDS_REVIEW / phone_verdict_unreadable.
+    const client = fakeClient([{ rows: [row('1')], nextCursor: null }], {
+      getLead: vi.fn(() => Promise.resolve({ phone: { number: '+977981' }, personKey: 'lead:1' })),
+    });
+
+    await runLeadPoll({ client, config: config(), needsReviewNotifier: notifier });
+
+    expect(notifier).toHaveBeenCalledTimes(1);
+    expect(notifier.mock.calls[0]![0]).toBe('1');
+    expect(notifier.mock.calls[0]![1]).toBe('phone_verdict_unreadable');
+  });
+
+  it('does NOT notify the CRM for an ELIGIBLE lead', async () => {
+    seedCursor();
+    const notifier = vi.fn().mockResolvedValue('sent');
+    const client = fakeClient([{ rows: [row('1')], nextCursor: null }]);
+
+    await runLeadPoll({ client, config: config(), needsReviewNotifier: notifier });
+
+    expect(notifier).not.toHaveBeenCalled();
+  });
+
+  it('does NOT notify the CRM for a SKIPPED lead', async () => {
+    seedCursor();
+    const notifier = vi.fn().mockResolvedValue('sent');
+    const client = fakeClient([{ rows: [row('1', { is_deleted: true })], nextCursor: null }]);
+
+    await runLeadPoll({ client, config: config(), needsReviewNotifier: notifier });
+
+    expect(notifier).not.toHaveBeenCalled();
+  });
+
+  it('does not notify again when an already-decided lead reappears', async () => {
+    seedCursor();
+    const notifier = vi.fn().mockResolvedValue('sent');
+    const mkClient = () =>
+      fakeClient([{ rows: [row('1')], nextCursor: null }], {
+        getLead: vi.fn(() =>
+          Promise.resolve({ phone: { number: '+977981' }, personKey: 'lead:1' }),
+        ),
+      });
+
+    await runLeadPoll({ client: mkClient(), config: config(), needsReviewNotifier: notifier });
+    seedCursor();
+    await runLeadPoll({ client: mkClient(), config: config(), needsReviewNotifier: notifier });
+
+    expect(notifier).toHaveBeenCalledTimes(1); // only on the first transition
+  });
+
+  it('a notifier failure never aborts the poll (the decision is already persisted)', async () => {
+    seedCursor();
+    const notifier = vi.fn().mockRejectedValue(new Error('crm down'));
+    const client = fakeClient([{ rows: [row('1')], nextCursor: null }], {
+      getLead: vi.fn(() => Promise.resolve({ phone: { number: '+977981' }, personKey: 'lead:1' })),
+    });
+
+    const summary = await runLeadPoll({ client, config: config(), needsReviewNotifier: notifier });
+
+    expect(summary.decisionsApplied).toBe(1);
+    expect(db.leads.get('1')!.decisionReason).toBe('phone_verdict_unreadable');
   });
 });
 
