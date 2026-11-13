@@ -25,6 +25,12 @@ import {
 } from '../repositories/callRecord.repository.js';
 import { deliverCallNote } from './callNoteDelivery.service.js';
 import { enqueueReviewNote } from './reviewNoteDelivery.service.js';
+import {
+  recordLifecycle,
+  holdRemainingLabel,
+  LifecycleEvent,
+  LifecycleStatus,
+} from './leadLifecycle.service.js';
 import { ProcessingStatus } from '@prisma/client';
 
 /**
@@ -125,6 +131,14 @@ export async function initiateCallForLead(
     (eligibility.outcome === 'NEEDS_REVIEW' &&
       eligibility.reason === 'awaiting_new_lead_rule_confirmation');
   if (!hardRulesPassed) {
+    await recordLifecycle({
+      leadId,
+      event: LifecycleEvent.ELIGIBILITY_CHECKED,
+      status: LifecycleStatus.REJECTED,
+      reason: eligibility.reason,
+      ...(eligibility.detail === undefined ? {} : { detail: eligibility.detail }),
+      metadata: { outcome: eligibility.outcome },
+    });
     // Persist the terminal/retryable decision so the lead does not stay stuck
     // ELIGIBLE. A SKIPPED eligibility outcome is a business no (terminal); a
     // NEEDS_REVIEW outcome is a data gap the re-evaluation sweep can retry.
@@ -137,12 +151,32 @@ export async function initiateCallForLead(
     );
     return { outcome: 'rejected_eligibility', leadId, reason: eligibility.reason };
   }
+  await recordLifecycle({
+    leadId,
+    event: LifecycleEvent.ELIGIBILITY_CHECKED,
+    status: LifecycleStatus.PASSED,
+    detail: 'Hard eligibility rules passed',
+  });
 
   // 3b. Oct 20 brief routing/ownership gate: phone present, not deleted, not yet
   //     assigned, no booked call, and crm_route not legacy/crm. (The active-hold
   //     check is applied separately at step 5.)
   const crmGate = evaluateCrmGate(row);
+  const crmGateMetadata = {
+    crmRoute: typeof row.crm_route === 'string' ? row.crm_route : null,
+    salesAgentAssigned: Boolean(row.sales_agent_email),
+    bookedCall: row.booked_call != null,
+    phonePresent: Boolean(row.phone ?? row.whatsapp),
+  };
   if (!crmGate.ok) {
+    await recordLifecycle({
+      leadId,
+      event: LifecycleEvent.CRM_GATE_CHECKED,
+      status: LifecycleStatus.REJECTED,
+      reason: crmGate.reason,
+      ...(crmGate.detail === undefined ? {} : { detail: crmGate.detail }),
+      metadata: crmGateMetadata,
+    });
     // Routing/ownership failures (legacy/crm route, already assigned/booked,
     // no contact number) are terminal business decisions -> SKIPPED.
     await persistEligibleRejection(
@@ -154,10 +188,24 @@ export async function initiateCallForLead(
     );
     return { outcome: 'rejected_eligibility', leadId, reason: crmGate.reason };
   }
+  await recordLifecycle({
+    leadId,
+    event: LifecycleEvent.CRM_GATE_CHECKED,
+    status: LifecycleStatus.PASSED,
+    detail: 'Routing/ownership gate passed',
+    metadata: crmGateMetadata,
+  });
 
   // 4. Phone verdict — only a validated E.164 number may be dialled.
   const verdict = readPhoneVerdict(detail.phone);
   if (verdict.status !== 'valid') {
+    await recordLifecycle({
+      leadId,
+      event: LifecycleEvent.PHONE_CHECKED,
+      status: LifecycleStatus.REJECTED,
+      reason: verdict.status === 'invalid' ? 'phone_not_validated' : 'phone_verdict_unreadable',
+      detail: verdict.status === 'invalid' ? verdict.detail : 'phone verdict was absent or unreadable',
+    });
     // invalid = a number that can never be dialled (terminal -> SKIPPED);
     // unreadable = the verdict shape was missing (a data gap the sweep can
     // retry -> NEEDS_REVIEW). Mirrors evaluatePhoneEligibility's mapping.
@@ -187,12 +235,26 @@ export async function initiateCallForLead(
     };
   }
   const toNumber = verdict.e164;
+  await recordLifecycle({
+    leadId,
+    event: LifecycleEvent.PHONE_CHECKED,
+    status: LifecycleStatus.PASSED,
+    detail: 'Validated dialable number present',
+  });
 
   // 5. Caller hold — only call WITHIN an active hold window; never call late.
   const current = detail.current ?? detail.captured ?? {};
   const holdRaw =
     typeof current['caller_hold_until'] === 'string' ? current['caller_hold_until'] : null;
   if (!isHoldActive(evaluateCallWindow(holdRaw, now()))) {
+    await recordLifecycle({
+      leadId,
+      event: LifecycleEvent.HOLD_CHECKED,
+      status: LifecycleStatus.EXPIRED,
+      reason: 'caller_hold_inactive',
+      detail: 'Caller hold is not active',
+      metadata: { callerHoldUntil: holdRaw },
+    });
     // The call window is not open. We never extend the hold or dial late. For a
     // first attempt this is terminal (SKIPPED); for a no-answer RETRY it returns
     // to RETRY_PENDING to await a re-issued hold WITHOUT consuming an attempt —
@@ -200,6 +262,19 @@ export async function initiateCallForLead(
     await persistHoldExpired(leadId, config, now());
     return { outcome: 'rejected_hold_expired', leadId, reason: 'caller hold is not active' };
   }
+  await recordLifecycle({
+    leadId,
+    event: LifecycleEvent.HOLD_CHECKED,
+    status: LifecycleStatus.ACTIVE,
+    detail:
+      holdRemainingLabel(holdRaw, now().getTime()) !== null
+        ? `Caller hold active, remaining ${holdRemainingLabel(holdRaw, now().getTime())}`
+        : 'Caller hold active',
+    metadata: {
+      callerHoldUntil: holdRaw,
+      remainingHold: holdRemainingLabel(holdRaw, now().getTime()),
+    },
+  });
 
   // 6. Person context (best-effort; it enriches the call but never gates it, and
   //    it is NOT sent to Retell yet — see the dynamic-variable note below).
@@ -231,6 +306,14 @@ export async function initiateCallForLead(
       { leadId },
       'call orchestrator: caller hold lapsed before dialling; not placing a call',
     );
+    await recordLifecycle({
+      leadId,
+      event: LifecycleEvent.HOLD_CHECKED,
+      status: LifecycleStatus.EXPIRED,
+      reason: 'caller_hold_lapsed',
+      detail: 'Caller hold lapsed before dialling',
+      metadata: { callerHoldUntil: holdRaw },
+    });
     await persistHoldExpired(leadId, config, now());
     return {
       outcome: 'rejected_hold_expired',
@@ -242,6 +325,13 @@ export async function initiateCallForLead(
   // 7. Claim the ELIGIBLE lead atomically (serialises workers).
   const claimed = await claimEligibleLead(leadId, workerId, now());
   if (!claimed) {
+    await recordLifecycle({
+      leadId,
+      event: LifecycleEvent.CALL_ATTEMPT,
+      status: LifecycleStatus.REJECTED,
+      reason: 'claim_failed',
+      detail: 'Lead not ELIGIBLE or already claimed by another worker',
+    });
     return { outcome: 'claim_failed', leadId, reason: 'lead not ELIGIBLE or already claimed' };
   }
 
@@ -249,6 +339,13 @@ export async function initiateCallForLead(
   //    requeueForRetry refuses the lead, so an uncertain call is never redialled.
   const calling = await markCalling(claimed.id, claimed.version, now());
   if (!calling) {
+    await recordLifecycle({
+      leadId,
+      event: LifecycleEvent.CALL_ATTEMPT,
+      status: LifecycleStatus.REJECTED,
+      reason: 'claim_failed',
+      detail: 'Could not transition to CALLING',
+    });
     return { outcome: 'claim_failed', leadId, reason: 'could not transition to CALLING' };
   }
 
@@ -258,8 +355,23 @@ export async function initiateCallForLead(
   if (!attempt.created) {
     // An unresolved attempt already exists (e.g. a prior uncertain call).
     logger.warn({ leadId }, 'call orchestrator: active attempt already exists; not dialling');
+    await recordLifecycle({
+      leadId,
+      event: LifecycleEvent.CALL_ATTEMPT,
+      status: LifecycleStatus.REJECTED,
+      reason: 'duplicate_attempt',
+      detail: 'An unresolved call attempt already exists',
+      metadata: { callRecordId: attempt.record.id },
+    });
     return { outcome: 'duplicate_attempt', leadId, callRecordId: attempt.record.id };
   }
+  await recordLifecycle({
+    leadId,
+    event: LifecycleEvent.CALL_ATTEMPT,
+    status: LifecycleStatus.ATTEMPTED,
+    detail: 'Outbound call attempt opened',
+    metadata: { callRecordId: attempt.record.id },
+  });
 
   // 10. Place the call. The client also re-checks the switch and validates the
   //     E.164 number; it is single-shot and never retries.
@@ -276,6 +388,14 @@ export async function initiateCallForLead(
     });
 
     await attachProviderCallId(attempt.record.id, call.callId, now());
+
+    await recordLifecycle({
+      leadId,
+      event: LifecycleEvent.RETELL_INITIATED,
+      status: LifecycleStatus.INITIATED,
+      detail: 'Retell accepted the outbound call',
+      metadata: { callRecordId: attempt.record.id, retellCallId: call.callId },
+    });
 
     logger.info(
       { leadId, callRecordId: attempt.record.id, retellCallId: call.callId },
@@ -418,6 +538,14 @@ async function handleDialFailure(
       { leadId, callRecordId, ...safe },
       'call orchestrator: UNCERTAIN provider result; leaving CALLING for reconciliation',
     );
+    await recordLifecycle({
+      leadId,
+      event: LifecycleEvent.CALL_FAILED,
+      status: LifecycleStatus.FAILED,
+      reason: 'provider_uncertain',
+      detail: 'Uncertain provider result; left CALLING for reconciliation',
+      metadata: { callRecordId, kind: safe.kind },
+    });
     return { outcome: 'provider_uncertain', leadId, callRecordId, reason: error.kind };
   }
 
@@ -430,6 +558,14 @@ async function handleDialFailure(
   // as a CRM note. Best-effort: it never changes the outcome and never retries the
   // call; a failure here is logged, not thrown.
   await recordPreDialFailure(leadId, callRecordId, error);
+  await recordLifecycle({
+    leadId,
+    event: LifecycleEvent.CALL_FAILED,
+    status: LifecycleStatus.FAILED,
+    reason: error instanceof RetellApiError ? error.kind : 'provider_refused',
+    detail: 'Provider refused before dialling; marked FAILED',
+    metadata: { callRecordId, kind: safe.kind },
+  });
   logger.error(
     { leadId, callRecordId, ...safe },
     'call orchestrator: provider refused before dialling; marked FAILED',

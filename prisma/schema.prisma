@@ -103,19 +103,19 @@ model LeadProcessing {
   // failure or worker restart, and is sent at most once per (lead, reason).
 
   /// null | pending | sent | failed. Null until a review note is enqueued.
-  reviewNoteStatus String? @db.VarChar(16)
+  reviewNoteStatus        String?   @db.VarChar(16)
   /// The reason code the note was enqueued for (stable; not re-derived later).
-  reviewNoteReason String? @db.VarChar(64)
+  reviewNoteReason        String?   @db.VarChar(64)
   /// Short non-personal detail captured when the note was enqueued.
-  reviewNoteDetail String? @db.VarChar(300)
+  reviewNoteDetail        String?   @db.VarChar(300)
   /// How many delivery attempts have been made.
-  reviewNoteAttempts Int @default(0)
+  reviewNoteAttempts      Int       @default(0)
   /// When the next delivery attempt becomes due (backoff).
   reviewNoteNextAttemptAt DateTime? @db.Timestamptz(3)
   /// Sanitized failure category for the last attempt (never a raw body/PII).
-  reviewNoteError String? @db.VarChar(200)
+  reviewNoteError         String?   @db.VarChar(200)
   /// When the review note was confirmed delivered.
-  reviewNoteSentAt DateTime? @db.Timestamptz(3)
+  reviewNoteSentAt        DateTime? @db.Timestamptz(3)
 
   /// The `updated_at` of the lead row that produced the current decision.
   /// Lets us see that a later appearance was only an update, not a new inquiry.
@@ -237,6 +237,48 @@ model CallRecord {
   @@map("call_records")
 }
 
+/// Append-only lifecycle history for a lead inside the AI Caller workflow.
+///
+/// One row per significant event (received, eligibility, hold, CRM gate,
+/// decision, call attempt, Retell call, failure, completion). This is a
+/// DURABLE audit trail so "what happened to this lead" can be answered from the
+/// database long after Render console logs have rotated away.
+///
+/// Scope rules (same as the rest of the schema): NO personal data. `metadata`
+/// holds only non-PII context (routing label, hold timestamp, boolean flags,
+/// provider ids) — never phone numbers, emails, transcripts, or secrets.
+model LeadLifecycleEvent {
+  id String @id @default(uuid()) @db.Uuid
+
+  /// External Lead API identifier the event belongs to. Not a foreign key: the
+  /// history stays meaningful even if the processing row is later archived, and
+  /// a "received" event can exist before any `lead_processing` row does.
+  leadId String @db.VarChar(128)
+
+  /// Machine-readable stage code, e.g. `lead_received`, `crm_gate_checked`.
+  event String @db.VarChar(64)
+
+  /// Stage status label (e.g. a ProcessingStatus/CallStatus name, or
+  /// `passed`/`rejected`/`active`/`expired`). Null when not applicable.
+  status String? @db.VarChar(32)
+
+  /// Stable machine-readable reason code mirroring the codes already used in
+  /// `lead_processing` (e.g. `crm_route_excluded`, `phone_not_validated`).
+  reason String? @db.VarChar(64)
+
+  /// Short, sanitized human-readable elaboration. Never PII or a raw payload.
+  detail String? @db.VarChar(300)
+
+  /// Non-PII structured context for the event (jsonb). Flags, ids, timestamps.
+  metadata Json?
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+
+  @@index([leadId, createdAt])
+  @@index([createdAt])
+  @@map("lead_lifecycle_events")
+}
+
 /// Last safely processed polling position for an upstream integration.
 ///
 /// Advancement rule (enforced in code, not by the schema): the cursor is only
@@ -294,12 +336,12 @@ model AppointmentRecord {
   /// re-persisting the same booking is idempotent and PATCH can target it.
   appointmentId String @unique @db.VarChar(128)
 
-  agentEmail  String?   @db.VarChar(320)
-  startsAt    DateTime? @db.Timestamptz(3)
-  status      String?   @db.VarChar(64)
-  meetingType String?   @db.VarChar(32)
+  agentEmail   String?   @db.VarChar(320)
+  startsAt     DateTime? @db.Timestamptz(3)
+  status       String?   @db.VarChar(64)
+  meetingType  String?   @db.VarChar(32)
   /// decision.mode the team endpoint routed by: owner | pool.
-  decisionMode String?  @db.VarChar(16)
+  decisionMode String?   @db.VarChar(16)
 
   createdAt DateTime @default(now()) @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @db.Timestamptz(3)

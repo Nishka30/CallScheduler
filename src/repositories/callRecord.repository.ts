@@ -148,6 +148,17 @@ export async function countCallAttempts(leadId: string): Promise<number> {
   return prisma.callRecord.count({ where: { leadId } });
 }
 
+/**
+ * The most recent call attempt for a lead, or null when none exists. Used by the
+ * read-only lead-trace summary; returns the full row (callers pick safe fields).
+ */
+export async function getLatestCallRecordByLead(leadId: string): Promise<CallRecord | null> {
+  return prisma.callRecord.findFirst({
+    where: { leadId },
+    orderBy: [{ createdAt: 'desc' }],
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Provider-neutral lifecycle writers (Phase 3)
 //

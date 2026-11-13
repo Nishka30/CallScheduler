@@ -20,6 +20,7 @@ import {
 import { buildLeadCallContext, describeContextForLog } from './leadContext.service.js';
 import { initiateCallForLead, type OrchestratorResult } from './callOrchestrator.service.js';
 import { enqueueReviewNote } from './reviewNoteDelivery.service.js';
+import { recordLifecycle, LifecycleEvent, LifecycleStatus } from './leadLifecycle.service.js';
 
 /** Records a persistent CRM review-note intent when a lead enters NEEDS_REVIEW. Injectable for tests. */
 export type NeedsReviewNotifier = (
@@ -241,6 +242,20 @@ async function processRow(row: LeadListRow, ctx: RowContext): Promise<string> {
   const leadId = row.id;
   const leadUpdatedAt = parseDate(row.updated_at);
 
+  // Lifecycle: the lead was received from the Guided Boost feed on this poll.
+  await recordLifecycle({
+    leadId,
+    event: LifecycleEvent.LEAD_RECEIVED,
+    status: LifecycleStatus.RECEIVED,
+    detail: 'Received from Guided Boost feed',
+    metadata: {
+      leadStatus: row.lead_status ?? null,
+      isLead: row.is_lead ?? null,
+      crmRoute: row.crm_route ?? null,
+      updatedAt: typeof row.updated_at === 'string' ? row.updated_at : null,
+    },
+  });
+
   let decision: EligibilityDecision = evaluateListEligibility({
     row,
     isBootstrapRun: ctx.bootstrap,
@@ -263,6 +278,23 @@ async function processRow(row: LeadListRow, ctx: RowContext): Promise<string> {
     },
     ctx.now,
   );
+
+  // Lifecycle: the polling-stage decision for this lead. Recorded whether or not
+  // it was freshly applied, so a lead that was already judged on an earlier page
+  // still shows why it is not progressing.
+  await recordLifecycle({
+    leadId,
+    event: LifecycleEvent.LEAD_DECISION,
+    status: decision.outcome,
+    reason: decision.reason,
+    ...(decision.detail === undefined ? {} : { detail: decision.detail }),
+    metadata: {
+      applied: result.applied,
+      callingEnabled: ctx.config.RETELL_CALLING_ENABLED,
+      crmRoute: row.crm_route ?? null,
+      callerHoldUntil: typeof row.caller_hold_until === 'string' ? row.caller_hold_until : null,
+    },
+  });
 
   if (result.applied) {
     ctx.summary.decisionsApplied += 1;

@@ -17,6 +17,7 @@ import {
   completeReconciledCall,
 } from '../repositories/leadProcessing.repository.js';
 import { deliverCallNote } from './callNoteDelivery.service.js';
+import { recordLifecycle, LifecycleEvent } from './leadLifecycle.service.js';
 
 /** Call statuses that mean the attempt is finished (telephony-terminal). */
 const TERMINAL_CALL_STATUSES: ReadonlySet<CallStatus> = new Set([
@@ -164,6 +165,27 @@ export async function processRetellWebhook(input: ProcessWebhookInput): Promise<
     input.config ?? env,
     input.now ?? Date.now(),
   );
+
+  // Lifecycle: record the terminal call result exactly once (only when this
+  // event changed the record, so a redelivered/duplicate webhook does not append
+  // a second completion). Best-effort; never fails the webhook.
+  const completedRecord = result.record;
+  if (result.changed && completedRecord && TERMINAL_CALL_STATUSES.has(completedRecord.status)) {
+    await recordLifecycle({
+      leadId: completedRecord.leadId,
+      event: LifecycleEvent.CALL_COMPLETED,
+      status: completedRecord.status,
+      ...(completedRecord.outcome === null ? {} : { reason: completedRecord.outcome }),
+      detail: `Call ${completedRecord.status.toLowerCase()}`,
+      metadata: {
+        callRecordId: completedRecord.id,
+        retellCallId: completedRecord.retellCallId,
+        outcome: completedRecord.outcome,
+        endedAt: completedRecord.endedAt ? completedRecord.endedAt.toISOString() : null,
+        disconnectionReason: completedRecord.disconnectionReason,
+      },
+    });
+  }
 
   // Record the call in the CRM (a note for EVERY outcome), once. Secondary to the
   // local record: it never fails the webhook, and the local record is already
