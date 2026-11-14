@@ -64,7 +64,7 @@ vi.mock('../src/services/reviewNoteDelivery.service.js', () => ({
 
 const recordLifecycle = vi.fn().mockResolvedValue(true);
 vi.mock('../src/services/leadLifecycle.service.js', async (orig) => {
-  const actual = await orig<typeof import('../src/services/leadLifecycle.service.js')>();
+  const actual = await orig<Record<string, unknown>>();
   return { ...actual, recordLifecycle: (...a: unknown[]) => recordLifecycle(...a) };
 });
 
@@ -165,5 +165,51 @@ describe('poller lifecycle instrumentation', () => {
     });
     expect(loggedFor('3').some((e) => e['event'] === 'lead_received')).toBe(true);
     expect(loggedFor('4').some((e) => e['event'] === 'lead_received')).toBe(true);
+  });
+
+  it('an already-decided lead records the PERSISTED status, not the recomputed ELIGIBLE', async () => {
+    seedCursor();
+    // Pre-seed a lead persisted as SKIPPED/crm_route_excluded (what the orchestrator
+    // would have set on the first-decision cycle). The poll will recompute it as
+    // list-ELIGIBLE (poll eligibility ignores crm_route), but must NOT show ELIGIBLE.
+    db.leads.set('5', { status: 'SKIPPED', decisionReason: 'crm_route_excluded', version: 1 });
+
+    await runLeadPoll({
+      client: fakeClient([{ rows: [row('5', { crm_route: 'legacy' })], nextCursor: null }]),
+      config: config({ RETELL_CALLING_ENABLED: 'true' }),
+    });
+
+    const events = loggedFor('5');
+    const alreadyDecided = events.find((e) => e['event'] === 'already_decided');
+    expect(alreadyDecided).toMatchObject({ status: 'SKIPPED', reason: 'crm_route_excluded' });
+    expect((alreadyDecided!['metadata'] as Record<string, unknown>)['polledOutcome']).toBe('ELIGIBLE');
+    // It must NOT emit a lead_decision event claiming the lead is currently ELIGIBLE.
+    expect(events.some((e) => e['event'] === 'lead_decision')).toBe(false);
+  });
+
+  it('an orchestrator exception is isolated to that lead and the poll continues', async () => {
+    seedCursor();
+    const callInitiator = vi.fn((leadId: string) =>
+      leadId === '7'
+        ? Promise.reject(new Error('boom'))
+        : Promise.resolve({ outcome: 'call_initiated', leadId }),
+    );
+
+    const summary = await runLeadPoll({
+      client: fakeClient([{ rows: [row('7'), row('8')], nextCursor: null }]),
+      config: config({ RETELL_CALLING_ENABLED: 'true' }),
+      callInitiator: callInitiator as never,
+    });
+
+    // The whole cycle completed despite the throw on lead 7.
+    expect(summary.rowsSeen).toBe(2);
+    // Lead 7 recorded a best-effort call_failed(orchestrator_exception).
+    const sevenFail = loggedFor('7').find(
+      (e) => e['event'] === 'call_failed' && e['reason'] === 'orchestrator_exception',
+    );
+    expect(sevenFail).toBeTruthy();
+    // Lead 8 was still processed after lead 7 threw.
+    expect(loggedFor('8').some((e) => e['event'] === 'lead_received')).toBe(true);
+    expect(callInitiator).toHaveBeenCalledWith('8', expect.anything());
   });
 });

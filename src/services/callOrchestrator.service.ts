@@ -105,6 +105,13 @@ export async function initiateCallForLead(
     requireRetellCallingEnabled(config);
   } catch {
     logger.info({ leadId }, 'call orchestrator: calling disabled, no action taken');
+    await recordLifecycle({
+      leadId,
+      event: LifecycleEvent.CALLING_DISABLED,
+      status: LifecycleStatus.REJECTED,
+      reason: 'calling_disabled',
+      detail: 'RETELL_CALLING_ENABLED is false; no call placed',
+    });
     return { outcome: 'calling_disabled', leadId };
   }
 
@@ -115,7 +122,7 @@ export async function initiateCallForLead(
   try {
     detail = await leadApiClient.getLead(leadId);
   } catch (error) {
-    return leadReadFailure(leadId, error, 'lead detail');
+    return await leadReadFailure(leadId, error, 'lead detail');
   }
 
   // 3. Re-check the hard eligibility rules against the fresh detail. We reuse
@@ -165,7 +172,7 @@ export async function initiateCallForLead(
   const crmGateMetadata = {
     crmRoute: typeof row.crm_route === 'string' ? row.crm_route : null,
     salesAgentAssigned: Boolean(row.sales_agent_email),
-    bookedCall: row.booked_call != null,
+    bookedCall: row.booked_call !== null && row.booked_call !== undefined,
     phonePresent: Boolean(row.phone ?? row.whatsapp),
   };
   if (!crmGate.ok) {
@@ -509,10 +516,22 @@ async function persistHoldExpired(leadId: string, config: Env, now: Date): Promi
   }
 }
 
-function leadReadFailure(leadId: string, error: unknown, what: string): OrchestratorResult {
+async function leadReadFailure(
+  leadId: string,
+  error: unknown,
+  what: string,
+): Promise<OrchestratorResult> {
   logger.warn({ leadId, err: errName(error) }, `call orchestrator: ${what} fetch failed`);
   const reason =
     error instanceof LeadApiError ? `${what} fetch failed (${error.kind})` : `${what} fetch failed`;
+  await recordLifecycle({
+    leadId,
+    event: LifecycleEvent.LEAD_UNAVAILABLE,
+    status: LifecycleStatus.REJECTED,
+    reason: 'lead_unavailable',
+    detail: reason,
+    metadata: { kind: error instanceof LeadApiError ? error.kind : 'unknown' },
+  });
   return { outcome: 'lead_unavailable', leadId, reason };
 }
 

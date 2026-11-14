@@ -39,7 +39,7 @@ vi.mock('../src/services/reviewNoteDelivery.service.js', () => ({
 
 const recordLifecycle = vi.fn().mockResolvedValue(true);
 vi.mock('../src/services/leadLifecycle.service.js', async (orig) => {
-  const actual = await orig<typeof import('../src/services/leadLifecycle.service.js')>();
+  const actual = await orig<Record<string, unknown>>();
   return { ...actual, recordLifecycle: (...a: unknown[]) => recordLifecycle(...a) };
 });
 
@@ -113,12 +113,12 @@ beforeEach(() => {
   recordLifecycle.mockResolvedValue(true);
   vi.mocked(claimEligibleLead).mockResolvedValue({ id: 'proc-1', version: 1 } as never);
   vi.mocked(markCalling).mockResolvedValue({ id: 'proc-1', version: 2 } as never);
-  vi.mocked(completeProcessing).mockResolvedValue(true as never);
+  vi.mocked(completeProcessing).mockResolvedValue(true);
   vi.mocked(recordCallAttempt).mockResolvedValue({ created: true, record: { id: 'call-1' } } as never);
   vi.mocked(attachProviderCallId).mockResolvedValue({ id: 'call-1' } as never);
   vi.mocked(markCallAttemptFailed).mockResolvedValue({ id: 'call-1', leadId: 'lead-1' } as never);
-  vi.mocked(finalizeRejectedEligibleLead).mockResolvedValue(true as never);
-  vi.mocked(finalizeHoldExpired).mockResolvedValue('skipped' as never);
+  vi.mocked(finalizeRejectedEligibleLead).mockResolvedValue(true);
+  vi.mocked(finalizeHoldExpired).mockResolvedValue('skipped');
 });
 
 describe('orchestrator lifecycle instrumentation — happy path', () => {
@@ -163,5 +163,45 @@ describe('orchestrator lifecycle instrumentation — rejections', () => {
 
     const failed = find('call_failed');
     expect(failed).toMatchObject({ event: 'call_failed', status: 'FAILED' });
+  });
+});
+
+describe('orchestrator lifecycle instrumentation — previously-invisible exits', () => {
+  it('records a calling_disabled event when the master switch is off', async () => {
+    const deps = fakeClients();
+    deps.config = config({ RETELL_CALLING_ENABLED: 'false' });
+
+    const result = await initiateCallForLead('lead-1', deps);
+
+    expect(result.outcome).toBe('calling_disabled');
+    expect(find('calling_disabled')).toMatchObject({
+      event: 'calling_disabled',
+      status: 'rejected',
+      reason: 'calling_disabled',
+    });
+  });
+
+  it('records a lead_unavailable event when the lead detail fetch fails', async () => {
+    const deps = fakeClients();
+    deps.leadApiClient.getLead = vi.fn().mockRejectedValue(new Error('lead api down'));
+
+    const result = await initiateCallForLead('lead-1', deps);
+
+    expect(result.outcome).toBe('lead_unavailable');
+    expect(find('lead_unavailable')).toMatchObject({
+      event: 'lead_unavailable',
+      status: 'rejected',
+      reason: 'lead_unavailable',
+    });
+    // never reached the orchestrator's later stages
+    expect(find('eligibility_checked')).toBeUndefined();
+    expect(find('call_attempt')).toBeUndefined();
+  });
+
+  it('the happy path records none of the new blind-spot events', async () => {
+    const result = await initiateCallForLead('lead-1', fakeClients());
+    expect(result.outcome).toBe('call_initiated');
+    expect(find('calling_disabled')).toBeUndefined();
+    expect(find('lead_unavailable')).toBeUndefined();
   });
 });

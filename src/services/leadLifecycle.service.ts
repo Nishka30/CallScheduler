@@ -33,8 +33,14 @@ export const LifecycleEvent = {
   CRM_GATE_CHECKED: 'crm_gate_checked',
   /** The caller-hold window was evaluated. */
   HOLD_CHECKED: 'hold_checked',
-  /** The polling-stage processing decision was recorded. */
+  /** The polling-stage processing decision was recorded (a FRESH decision). */
   LEAD_DECISION: 'lead_decision',
+  /** The poll saw a lead that was already decided on an earlier cycle. */
+  ALREADY_DECIDED: 'already_decided',
+  /** The orchestrator exited because outbound calling is disabled. */
+  CALLING_DISABLED: 'calling_disabled',
+  /** The orchestrator could not fetch fresh lead detail (Lead API read failed). */
+  LEAD_UNAVAILABLE: 'lead_unavailable',
   /** An outbound call attempt record was opened. */
   CALL_ATTEMPT: 'call_attempt',
   /** Retell accepted the outbound call request. */

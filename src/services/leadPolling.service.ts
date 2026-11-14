@@ -279,25 +279,26 @@ async function processRow(row: LeadListRow, ctx: RowContext): Promise<string> {
     ctx.now,
   );
 
-  // Lifecycle: the polling-stage decision for this lead. Recorded whether or not
-  // it was freshly applied, so a lead that was already judged on an earlier page
-  // still shows why it is not progressing.
-  await recordLifecycle({
-    leadId,
-    event: LifecycleEvent.LEAD_DECISION,
-    status: decision.outcome,
-    reason: decision.reason,
-    ...(decision.detail === undefined ? {} : { detail: decision.detail }),
-    metadata: {
-      applied: result.applied,
-      callingEnabled: ctx.config.RETELL_CALLING_ENABLED,
-      crmRoute: row.crm_route ?? null,
-      callerHoldUntil: typeof row.caller_hold_until === 'string' ? row.caller_hold_until : null,
-    },
-  });
-
   if (result.applied) {
     ctx.summary.decisionsApplied += 1;
+
+    // Lifecycle: a FRESH polling-stage decision for this lead (this poll moved it
+    // out of PENDING). This is the decision that actually governs what happens
+    // next, so it is the only case that records a `lead_decision` event.
+    await recordLifecycle({
+      leadId,
+      event: LifecycleEvent.LEAD_DECISION,
+      status: decision.outcome,
+      reason: decision.reason,
+      ...(decision.detail === undefined ? {} : { detail: decision.detail }),
+      metadata: {
+        applied: true,
+        callingEnabled: ctx.config.RETELL_CALLING_ENABLED,
+        crmRoute: row.crm_route ?? null,
+        callerHoldUntil: typeof row.caller_hold_until === 'string' ? row.caller_hold_until : null,
+      },
+    });
+
     // When a lead FIRST enters NEEDS_REVIEW, surface it to the CRM (best-effort).
     // The local decision is already persisted above, so a notification failure can
     // never lose or flip it; the notifier itself never throws, but we guard anyway
@@ -316,6 +317,27 @@ async function processRow(row: LeadListRow, ctx: RowContext): Promise<string> {
     // Already judged on an earlier page or poll. Its original decision stands,
     // so a later note or status change cannot promote an old lead.
     ctx.summary.alreadyDecided += 1;
+
+    // Lifecycle: record the PERSISTED decision, NOT this poll's recomputed
+    // eligibility. Poll-stage eligibility ignores crm_route and the caller hold,
+    // so recording `decision.outcome` here would show a terminal SKIPPED /
+    // crm_route_excluded lead as though it were currently ELIGIBLE/callable. The
+    // recomputed values are kept under `polled*` for context only.
+    await recordLifecycle({
+      leadId,
+      event: LifecycleEvent.ALREADY_DECIDED,
+      status: result.record.status,
+      ...(result.record.decisionReason === null ? {} : { reason: result.record.decisionReason }),
+      ...(result.record.decisionDetail === null ? {} : { detail: result.record.decisionDetail }),
+      metadata: {
+        applied: false,
+        persistedStatus: result.record.status,
+        polledOutcome: decision.outcome,
+        polledReason: decision.reason,
+        crmRoute: row.crm_route ?? null,
+        callerHoldUntil: typeof row.caller_hold_until === 'string' ? row.caller_hold_until : null,
+      },
+    });
     return 'already_decided';
   }
 
@@ -328,11 +350,32 @@ async function processRow(row: LeadListRow, ctx: RowContext): Promise<string> {
   // dial, and records the attempt before contacting Retell.
   if (decision.outcome === 'ELIGIBLE' && ctx.config.RETELL_CALLING_ENABLED) {
     ctx.summary.callsConsidered += 1;
-    const call = await ctx.callInitiator(leadId, {
-      config: ctx.config,
-      leadApiClient: ctx.client,
-    });
-    ctx.summary.callOutcomes[call.outcome] = (ctx.summary.callOutcomes[call.outcome] ?? 0) + 1;
+    try {
+      const call = await ctx.callInitiator(leadId, {
+        config: ctx.config,
+        leadApiClient: ctx.client,
+      });
+      ctx.summary.callOutcomes[call.outcome] = (ctx.summary.callOutcomes[call.outcome] ?? 0) + 1;
+    } catch (error) {
+      // One bad lead must never abort the whole poll cycle. The orchestrator
+      // already handles its own expected failures; this guards ONLY against an
+      // unexpected throw (e.g. a transient DB error during claim). Log it,
+      // record a best-effort lifecycle event, and continue. The lead stays
+      // ELIGIBLE and the ELIGIBLE backstop will re-attempt it next sweep.
+      ctx.summary.callOutcomes['orchestrator_exception'] =
+        (ctx.summary.callOutcomes['orchestrator_exception'] ?? 0) + 1;
+      logger.error(
+        { leadId, err: error instanceof Error ? error.name : 'unknown' },
+        'lead poll: call orchestrator raised unexpectedly; lead left for the backstop, poll continues',
+      );
+      await recordLifecycle({
+        leadId,
+        event: LifecycleEvent.CALL_FAILED,
+        status: LifecycleStatus.FAILED,
+        reason: 'orchestrator_exception',
+        detail: 'Call orchestrator threw an unexpected error; lead left for the ELIGIBLE backstop',
+      });
+    }
   }
 
   return decision.outcome;

@@ -48,7 +48,12 @@ export interface CallReconcileSummary {
   stuckProcessing: number;
   requeuedProcessing: number;
   eligibleBackstop: number;
+  /** Orchestrator hand-offs that returned without throwing. NOT a count of dials. */
   backstopAttempted: number;
+  /** Per-lead orchestrator outcome of each hand-off (e.g. call_initiated,
+   *  rejected_eligibility, rejected_hold_expired, lead_unavailable, duplicate_attempt,
+   *  claim_failed, provider_failed). Makes clear how many were actually called. */
+  backstopOutcomes: Record<string, number>;
   races: number;
   errors: number;
 }
@@ -97,6 +102,7 @@ export class CallReconciliationSweeper {
       requeuedProcessing: 0,
       eligibleBackstop: 0,
       backstopAttempted: 0,
+      backstopOutcomes: {},
       races: 0,
       errors: 0,
     };
@@ -168,8 +174,18 @@ export class CallReconciliationSweeper {
         summary.eligibleBackstop = eligible.length;
         for (const row of eligible.slice(0, this.config.maxPerCycle)) {
           try {
-            await this.callInitiator(row.leadId);
+            // `backstopAttempted` counts hand-offs to the orchestrator, NOT dials.
+            // The real per-lead result is captured below (and in the lead's
+            // lifecycle events), so a run that re-hands many legacy/expired leads
+            // is never mistaken for a run that placed that many calls.
+            const result = await this.callInitiator(row.leadId);
             summary.backstopAttempted += 1;
+            const outcome = result.outcome ?? 'unknown';
+            summary.backstopOutcomes[outcome] = (summary.backstopOutcomes[outcome] ?? 0) + 1;
+            logger.info(
+              { leadId: row.leadId, outcome },
+              'call reconciliation: backstop hand-off outcome',
+            );
           } catch (error) {
             summary.errors += 1;
             logger.warn(
