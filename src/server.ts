@@ -5,6 +5,10 @@ import { logger } from './lib/logger.js';
 import { disconnectPrisma } from './lib/prisma.js';
 import { createShutdownHandler } from './lib/shutdown.js';
 import { startLeadWorker, stopLeadWorker } from './services/leadWorker.service.js';
+import {
+  startCallerQueueWorker,
+  stopCallerQueueWorker,
+} from './services/callerQueueWorker.service.js';
 
 function closeServer(server: Server): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -17,7 +21,10 @@ function closeServer(server: Server): Promise<void> {
 
 function registerProcessHandlers(server: Server): void {
   const shutdown = createShutdownHandler({
-    stopWorker: stopLeadWorker,
+    stopWorker: async () => {
+      await stopLeadWorker();
+      await stopCallerQueueWorker();
+    },
     closeServer: () => closeServer(server),
     disconnect: disconnectPrisma,
     exit: (code) => process.exit(code),
@@ -58,6 +65,10 @@ function start(): void {
     // Start automatic lead polling/calling AFTER the listener is up. No-op unless
     // LEAD_WORKER_ENABLED is true; dialling stays gated by RETELL_CALLING_ENABLED.
     startLeadWorker(env);
+    // Start the Guided Boost queue worker. No-op unless CALLER_QUEUE_ENABLED is
+    // true; dialling stays gated by RETELL_CALLING_ENABLED (and Step 3 ingests
+    // without dialling — queue call execution lands in later steps).
+    startCallerQueueWorker(env);
   });
 
   server.on('error', (error: NodeJS.ErrnoException) => {

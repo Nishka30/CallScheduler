@@ -391,6 +391,97 @@ const envSchema = z.object({
 
   /** Minimum delay between CRM note delivery attempts. Default 5 minutes. */
   LEAD_NOTE_RETRY_BACKOFF_MS: z.coerce.number().int().min(60_000).max(86_400_000).default(300_000),
+
+  // -------------------------------------------------------------------------
+  // Guided Boost queue hand-off (`GET /api/caller/queue` + status reporting).
+  // Additive foundation only — no worker/client/call-flow wired yet. Default
+  // OFF, and dialling still requires RETELL_CALLING_ENABLED, so these flags
+  // alone never poll a queue or place a call.
+  // -------------------------------------------------------------------------
+
+  /**
+   * MASTER SWITCH for the Guided Boost queue worker, default OFF. While false,
+   * no queue is polled and no queue lead is ingested. Independent of
+   * LEAD_WORKER_ENABLED (the poll worker) so the two sources enable separately.
+   */
+  CALLER_QUEUE_ENABLED: booleanFlag('false'),
+
+  /** Delay between queue poll cycles. Default 30s (the documented cadence). */
+  CALLER_QUEUE_POLL_INTERVAL_MS: z.coerce
+    .number()
+    .int()
+    .min(5_000)
+    .max(3_600_000)
+    .default(30_000),
+
+  /**
+   * How long before a queue lead's `call_before` deadline the one-time
+   * `call_in_progress` extension signal is sent. Default 60s.
+   */
+  CALLER_IN_PROGRESS_LEAD_MS: z.coerce
+    .number()
+    .int()
+    .min(1_000)
+    .max(3_600_000)
+    .default(60_000),
+
+  /**
+   * Base URL for the Guided Boost caller queue + status endpoints. Defaults to
+   * the same host as the Lead API, since the endpoints live alongside `/api/crm/*`.
+   * Reuses the existing LEAD_API_KEY_CALLER / CRM_AGENT_EMAIL / CRM_AGENT_NAME
+   * auth — no separate queue credential is introduced.
+   */
+  CALLER_QUEUE_BASE_URL: z
+    .string()
+    .url('CALLER_QUEUE_BASE_URL must be an absolute URL')
+    .default('https://guided-boost.lovable.app')
+    .refine(
+      (value) => value.startsWith('https://'),
+      'CALLER_QUEUE_BASE_URL must use https so the API key is never sent in clear text',
+    )
+    .transform((value) => value.replace(/\/+$/, '')),
+
+  /**
+   * MASTER SWITCH for the QUEUE final-status RECONCILIATION sweep, default OFF.
+   *
+   * When off, a failed Guided Boost final-status report stays `failed` in the DB
+   * (recoverable) but is never automatically re-sent, and no new status requests
+   * are issued. Independent of the queue worker and the poll reconciliation. The
+   * sweep ONLY re-sends the already-persisted final status — it can never place a
+   * call, re-evaluate a lead, or touch the Step 5 source guards.
+   */
+  CALLER_STATUS_RECONCILE_ENABLED: booleanFlag('false'),
+
+  /**
+   * MASTER SWITCH for the active-call deadline monitor, default OFF.
+   *
+   * When off, no `call_in_progress` is ever sent and no deadline extension is
+   * requested. When on, the queue worker's post-poll sweep sends ONE
+   * `call_in_progress` per QUEUE call as it nears `callBeforeAt`, and persists any
+   * extended `call_before` Guided Boost returns. The monitor can never place a call
+   * or re-evaluate a lead; Guided Boost remains the owner of the eventual timeout.
+   */
+  CALLER_DEADLINE_MONITOR_ENABLED: booleanFlag('false'),
+
+  /**
+   * Bounded wait after a terminal QUEUE call before its final status is sent, so
+   * late Retell artifacts (transcript/recording/summary, which arrive on
+   * `call_analyzed` AFTER `call_ended`) can be included. Applies to COMPLETED calls
+   * only; non-conversation terminals are finalized on the next sweep. The wait is
+   * durable (persisted deadline + sweep), never an in-request sleep. Default 2 min.
+   */
+  CALLER_FINALIZE_WAIT_MS: z.coerce.number().int().min(0).max(1_800_000).default(120_000),
+
+  /** Total final-status delivery attempts allowed per lead (incl. the first). */
+  CALLER_STATUS_RETRY_MAX_ATTEMPTS: z.coerce.number().int().min(1).max(20).default(5),
+
+  /** Minimum delay between final-status delivery attempts. Default 5 minutes. */
+  CALLER_STATUS_RETRY_BACKOFF_MS: z.coerce
+    .number()
+    .int()
+    .min(60_000)
+    .max(86_400_000)
+    .default(300_000),
 });
 
 export type Env = z.infer<typeof envSchema>;

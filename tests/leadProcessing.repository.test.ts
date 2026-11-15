@@ -10,6 +10,7 @@ const leadProcessing = {
   findUnique: vi.fn(),
   findUniqueOrThrow: vi.fn(),
   findMany: vi.fn(),
+  update: vi.fn(),
   updateMany: vi.fn(),
 };
 
@@ -30,6 +31,7 @@ const {
   completeProcessing,
   completeCallingLead,
   ensureProcessingRecord,
+  ingestQueueLeadProcessing,
   finalizeRejectedEligibleLead,
   scheduleRetryOrComplete,
   findDueRetries,
@@ -39,6 +41,7 @@ const {
   findStuckCalling,
   findStuckProcessing,
   findEligibleNotCalled,
+  findReevaluableLeads,
   reconcileStuckCalling,
   requeueStuckProcessing,
   completeReconciledCall,
@@ -109,6 +112,83 @@ describe('ensureProcessingRecord', () => {
 
     await expect(ensureProcessingRecord('lead-1')).rejects.toThrow('connection lost');
     expect(leadProcessing.findUniqueOrThrow).not.toHaveBeenCalled();
+  });
+});
+
+describe('ingestQueueLeadProcessing', () => {
+  const OFFERED = new Date('2026-11-15T09:00:00.000Z');
+  const DEADLINE = new Date('2026-11-15T09:10:00.000Z');
+
+  it('creates a QUEUE-sourced ELIGIBLE row with the queue timing fields', async () => {
+    const created = record({ status: ProcessingStatus.ELIGIBLE, source: 'QUEUE' });
+    leadProcessing.create.mockResolvedValue(created);
+
+    const result = await ingestQueueLeadProcessing({
+      leadId: 'lead-1',
+      status: ProcessingStatus.ELIGIBLE,
+      offeredAt: OFFERED,
+      callBeforeAt: DEADLINE,
+      now: OFFERED,
+    });
+
+    expect(result).toEqual({ record: created, created: true });
+    expect(leadProcessing.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        leadId: 'lead-1',
+        source: 'QUEUE',
+        status: ProcessingStatus.ELIGIBLE,
+        offeredAt: OFFERED,
+        callBeforeAt: DEADLINE,
+      }),
+    });
+  });
+
+  it('is idempotent: an existing row yields created:false and is not downgraded', async () => {
+    const existing = record({ status: ProcessingStatus.CALLING, source: 'QUEUE' });
+    leadProcessing.create.mockRejectedValue(uniqueConstraintError());
+    leadProcessing.findUniqueOrThrow.mockResolvedValue(existing);
+
+    const result = await ingestQueueLeadProcessing({
+      leadId: 'lead-1',
+      status: ProcessingStatus.ELIGIBLE,
+      offeredAt: OFFERED,
+      callBeforeAt: DEADLINE,
+    });
+
+    expect(result).toEqual({ record: existing, created: false });
+  });
+
+  it('records a SKIPPED candidate (e.g. invalid phone) with a reason', async () => {
+    const skipped = record({ status: ProcessingStatus.SKIPPED, source: 'QUEUE' });
+    leadProcessing.create.mockResolvedValue(skipped);
+
+    await ingestQueueLeadProcessing({
+      leadId: 'lead-1',
+      status: ProcessingStatus.SKIPPED,
+      offeredAt: OFFERED,
+      callBeforeAt: DEADLINE,
+      decisionReason: 'phone_not_validated',
+    });
+
+    expect(leadProcessing.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        source: 'QUEUE',
+        status: ProcessingStatus.SKIPPED,
+        decisionReason: 'phone_not_validated',
+      }),
+    });
+  });
+
+  it('propagates non-unique-constraint errors', async () => {
+    leadProcessing.create.mockRejectedValue(new Error('connection lost'));
+    await expect(
+      ingestQueueLeadProcessing({
+        leadId: 'lead-1',
+        status: ProcessingStatus.ELIGIBLE,
+        offeredAt: OFFERED,
+        callBeforeAt: DEADLINE,
+      }),
+    ).rejects.toThrow('connection lost');
   });
 });
 
@@ -434,6 +514,34 @@ describe('scheduleRetryOrComplete (no-answer webhook)', () => {
     expect(await scheduleRetryOrComplete('lead-1', NEXT, 5, NOW)).toBe('noop');
     expect(leadProcessing.updateMany).not.toHaveBeenCalled();
   });
+
+  it('QUEUE no-answer is TERMINAL: completes (never RETRY_PENDING) even under the cap', async () => {
+    leadProcessing.findUnique.mockResolvedValue(
+      record({ status: ProcessingStatus.CALLING, attemptCount: 1, source: 'QUEUE' }),
+    );
+    leadProcessing.updateMany.mockResolvedValue({ count: 1 });
+
+    const result = await scheduleRetryOrComplete('lead-1', NEXT, 5, NOW);
+
+    expect(result).toBe('completed');
+    const call = leadProcessing.updateMany.mock.calls[0]![0] as { data: Record<string, unknown> };
+    expect(call.data.status).toBe(ProcessingStatus.COMPLETED);
+    expect(call.data.nextRetryAt).toBeNull();
+    expect(call.data.decisionReason).toBe('queue_no_answer_terminal');
+  });
+
+  it('POLL no-answer under the cap still reschedules (unchanged)', async () => {
+    leadProcessing.findUnique.mockResolvedValue(
+      record({ status: ProcessingStatus.CALLING, attemptCount: 1, source: 'POLL' }),
+    );
+    leadProcessing.updateMany.mockResolvedValue({ count: 1 });
+
+    const result = await scheduleRetryOrComplete('lead-1', NEXT, 5, NOW);
+
+    expect(result).toBe('scheduled');
+    const call = leadProcessing.updateMany.mock.calls[0]![0] as { data: Record<string, unknown> };
+    expect(call.data.status).toBe(ProcessingStatus.RETRY_PENDING);
+  });
 });
 
 describe('findDueRetries', () => {
@@ -455,6 +563,233 @@ describe('findDueRetries', () => {
     });
     expect(call.orderBy).toEqual({ nextRetryAt: 'asc' });
     expect(call.take).toBe(10);
+  });
+
+  it('is POLL-only: the retry sweep can never select a QUEUE record', async () => {
+    leadProcessing.findMany.mockResolvedValue([]);
+    await findDueRetries(new Date(), 5, 10);
+    const call = leadProcessing.findMany.mock.calls[0]![0] as { where: Record<string, unknown> };
+    expect(call.where.source).toBe('POLL');
+  });
+});
+
+describe('QUEUE final-status report reconciliation queries', () => {
+  it('findStatusReportsForRetry selects only due, failed, under-cap QUEUE reports with a persisted status', async () => {
+    const { findStatusReportsForRetry } = await import(
+      '../src/repositories/leadProcessing.repository.js'
+    );
+    leadProcessing.findMany.mockResolvedValue([
+      { leadId: 'lead-1', lastFinalStatus: 'no_answer', statusReportAttempts: 2 },
+    ]);
+    const now = new Date('2026-11-15T12:00:00.000Z');
+
+    const result = await findStatusReportsForRetry(now, 5, 50);
+
+    const call = leadProcessing.findMany.mock.calls[0]![0] as { where: Record<string, unknown> };
+    expect(call.where).toMatchObject({
+      source: 'QUEUE',
+      statusReportStatus: 'failed',
+      statusReportAttempts: { lt: 5 },
+      lastFinalStatus: { not: null },
+    });
+    expect(result).toEqual([{ leadId: 'lead-1', lastFinalStatus: 'no_answer', statusReportAttempts: 2 }]);
+  });
+
+  it('claimStatusReportForRetry leases a due QUEUE failed report via CAS (one winner)', async () => {
+    const { claimStatusReportForRetry } = await import(
+      '../src/repositories/leadProcessing.repository.js'
+    );
+    leadProcessing.updateMany.mockResolvedValue({ count: 1 });
+    const now = new Date('2026-11-15T12:00:00.000Z');
+    const lease = new Date('2026-11-15T12:05:00.000Z');
+
+    const ok = await claimStatusReportForRetry('lead-1', now, lease);
+
+    expect(ok).toBe(true);
+    const call = leadProcessing.updateMany.mock.calls[0]![0] as {
+      where: Record<string, unknown>;
+      data: Record<string, unknown>;
+    };
+    expect(call.where).toMatchObject({ leadId: 'lead-1', source: 'QUEUE', statusReportStatus: 'failed' });
+    expect(call.data).toEqual({ statusReportNextAttemptAt: lease });
+  });
+
+  it('claimStatusReportForRetry returns false when another worker already leased it', async () => {
+    const { claimStatusReportForRetry } = await import(
+      '../src/repositories/leadProcessing.repository.js'
+    );
+    leadProcessing.updateMany.mockResolvedValue({ count: 0 });
+    expect(await claimStatusReportForRetry('lead-1', new Date(), new Date())).toBe(false);
+  });
+
+  it('markStatusReportFailed persists the attempted final status + schedules the next attempt', async () => {
+    const { markStatusReportFailed } = await import(
+      '../src/repositories/leadProcessing.repository.js'
+    );
+    leadProcessing.update.mockResolvedValue(record());
+    const next = new Date('2026-11-15T12:05:00.000Z');
+
+    await markStatusReportFailed('lead-1', 'no_answer', 'network', next);
+
+    const call = leadProcessing.update.mock.calls[0]![0] as { data: Record<string, unknown> };
+    expect(call.data).toMatchObject({
+      statusReportStatus: 'failed',
+      statusReportAttempts: { increment: 1 },
+      lastFinalStatus: 'no_answer',
+      statusReportNextAttemptAt: next,
+    });
+  });
+});
+
+describe('QUEUE finalization (pending → send) queries', () => {
+  it('markStatusReportPending arms finalization only when status is still null (idempotent)', async () => {
+    const { markStatusReportPending } = await import(
+      '../src/repositories/leadProcessing.repository.js'
+    );
+    leadProcessing.updateMany.mockResolvedValue({ count: 1 });
+    const next = new Date('2026-11-15T09:12:00.000Z');
+
+    const armed = await markStatusReportPending('lead-1', 'reached_no_booking', 'busy', next);
+
+    expect(armed).toBe(true);
+    const call = leadProcessing.updateMany.mock.calls[0]![0] as {
+      where: Record<string, unknown>;
+      data: Record<string, unknown>;
+    };
+    expect(call.where).toMatchObject({ leadId: 'lead-1', source: 'QUEUE', statusReportStatus: null });
+    expect(call.data).toMatchObject({
+      statusReportStatus: 'pending',
+      lastFinalStatus: 'reached_no_booking',
+      statusReportReason: 'busy',
+      statusReportNextAttemptAt: next,
+    });
+  });
+
+  it('findPendingFinalizations selects due QUEUE pending reports with a persisted status + reason', async () => {
+    const { findPendingFinalizations } = await import(
+      '../src/repositories/leadProcessing.repository.js'
+    );
+    leadProcessing.findMany.mockResolvedValue([
+      { leadId: 'lead-1', lastFinalStatus: 'booked', statusReportReason: null, statusReportAttempts: 0 },
+    ]);
+
+    const result = await findPendingFinalizations(new Date('2026-11-15T09:12:00.000Z'), 50);
+
+    const call = leadProcessing.findMany.mock.calls[0]![0] as { where: Record<string, unknown> };
+    expect(call.where).toMatchObject({ source: 'QUEUE', statusReportStatus: 'pending', lastFinalStatus: { not: null } });
+    expect(result).toEqual([
+      { leadId: 'lead-1', lastFinalStatus: 'booked', statusReportReason: null, statusReportAttempts: 0 },
+    ]);
+  });
+
+  it('claimPendingFinalization CAS leases a due pending report (one winner)', async () => {
+    const { claimPendingFinalization } = await import(
+      '../src/repositories/leadProcessing.repository.js'
+    );
+    leadProcessing.updateMany.mockResolvedValue({ count: 1 });
+    const lease = new Date('2026-11-15T09:17:00.000Z');
+
+    const ok = await claimPendingFinalization('lead-1', new Date(), lease);
+
+    expect(ok).toBe(true);
+    const call = leadProcessing.updateMany.mock.calls[0]![0] as {
+      where: Record<string, unknown>;
+      data: Record<string, unknown>;
+    };
+    expect(call.where).toMatchObject({ leadId: 'lead-1', source: 'QUEUE', statusReportStatus: 'pending' });
+    expect(call.data).toEqual({ statusReportNextAttemptAt: lease });
+  });
+});
+
+describe('active-call deadline monitor queries (QUEUE)', () => {
+  it('findActiveQueueCallsNearDeadline selects active QUEUE calls within the lead window, unsent', async () => {
+    const { findActiveQueueCallsNearDeadline } = await import(
+      '../src/repositories/leadProcessing.repository.js'
+    );
+    leadProcessing.findMany.mockResolvedValue([
+      { leadId: 'lead-1', callBeforeAt: new Date('2026-11-15T09:10:00.000Z') },
+    ]);
+    const now = new Date('2026-11-15T09:09:30.000Z');
+
+    const result = await findActiveQueueCallsNearDeadline(now, 60_000, 50);
+
+    const call = leadProcessing.findMany.mock.calls[0]![0] as { where: Record<string, unknown> };
+    expect(call.where).toMatchObject({
+      source: 'QUEUE',
+      status: ProcessingStatus.CALLING,
+      callInProgressSentAt: null,
+    });
+    expect((call.where.callBeforeAt as { lte: Date }).lte.getTime()).toBe(now.getTime() + 60_000);
+    expect(result).toEqual([{ leadId: 'lead-1', callBeforeAt: new Date('2026-11-15T09:10:00.000Z') }]);
+  });
+
+  it('claimCallInProgressSend CAS: one winner, guarded on CALLING + unsent', async () => {
+    const { claimCallInProgressSend } = await import(
+      '../src/repositories/leadProcessing.repository.js'
+    );
+    leadProcessing.updateMany.mockResolvedValue({ count: 1 });
+    const now = new Date('2026-11-15T09:09:30.000Z');
+
+    const ok = await claimCallInProgressSend('lead-1', now);
+
+    expect(ok).toBe(true);
+    const call = leadProcessing.updateMany.mock.calls[0]![0] as {
+      where: Record<string, unknown>;
+      data: Record<string, unknown>;
+    };
+    expect(call.where).toMatchObject({
+      leadId: 'lead-1',
+      source: 'QUEUE',
+      status: ProcessingStatus.CALLING,
+      callInProgressSentAt: null,
+    });
+    expect(call.data).toEqual({ callInProgressSentAt: now });
+  });
+
+  it('claimCallInProgressSend returns false when the call is no longer CALLING / already sent', async () => {
+    const { claimCallInProgressSend } = await import(
+      '../src/repositories/leadProcessing.repository.js'
+    );
+    leadProcessing.updateMany.mockResolvedValue({ count: 0 });
+    expect(await claimCallInProgressSend('lead-1', new Date())).toBe(false);
+  });
+
+  it('updateCallBeforeAt persists the GB deadline, guarded on an active QUEUE call', async () => {
+    const { updateCallBeforeAt } = await import('../src/repositories/leadProcessing.repository.js');
+    leadProcessing.updateMany.mockResolvedValue({ count: 1 });
+    const newDeadline = new Date('2026-11-15T09:20:00.000Z');
+
+    await updateCallBeforeAt('lead-1', newDeadline);
+
+    const call = leadProcessing.updateMany.mock.calls[0]![0] as {
+      where: Record<string, unknown>;
+      data: Record<string, unknown>;
+    };
+    expect(call.where).toMatchObject({ leadId: 'lead-1', source: 'QUEUE', status: ProcessingStatus.CALLING });
+    expect(call.data).toEqual({ callBeforeAt: newDeadline });
+  });
+});
+
+describe('source-aware selection guards (QUEUE isolation)', () => {
+  it('findEligibleNotCalled selects only POLL leads (ELIGIBLE backstop never sees QUEUE)', async () => {
+    leadProcessing.findMany.mockResolvedValue([]);
+    await findEligibleNotCalled(new Date(), 10);
+    const call = leadProcessing.findMany.mock.calls[0]![0] as { where: Record<string, unknown> };
+    expect(call.where).toMatchObject({ source: 'POLL', status: ProcessingStatus.ELIGIBLE });
+  });
+
+  it('findStuckProcessing selects only POLL leads', async () => {
+    leadProcessing.findMany.mockResolvedValue([]);
+    await findStuckProcessing(new Date(), 10);
+    const call = leadProcessing.findMany.mock.calls[0]![0] as { where: Record<string, unknown> };
+    expect(call.where).toMatchObject({ source: 'POLL', status: ProcessingStatus.PROCESSING });
+  });
+
+  it('findReevaluableLeads selects only POLL leads (re-eval dial path never sees QUEUE)', async () => {
+    leadProcessing.findMany.mockResolvedValue([]);
+    await findReevaluableLeads(['phone_verdict_unreadable'], 10);
+    const call = leadProcessing.findMany.mock.calls[0]![0] as { where: Record<string, unknown> };
+    expect(call.where).toMatchObject({ source: 'POLL', status: ProcessingStatus.NEEDS_REVIEW });
   });
 });
 

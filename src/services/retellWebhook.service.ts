@@ -17,6 +17,7 @@ import {
   completeReconciledCall,
 } from '../repositories/leadProcessing.repository.js';
 import { deliverCallNote } from './callNoteDelivery.service.js';
+import { enqueueQueueFinalization } from './guidedBoostStatus.service.js';
 import { recordLifecycle, LifecycleEvent } from './leadLifecycle.service.js';
 
 /** Call statuses that mean the attempt is finished (telephony-terminal). */
@@ -192,6 +193,13 @@ export async function processRetellWebhook(input: ProcessWebhookInput): Promise<
   // persisted, so a CRM note failure never loses data.
   await deliverCallNoteIfTerminal(event.event, result.record);
 
+  // Enqueue Guided Boost finalization — QUEUE leads only. Strictly secondary: it runs
+  // after the local state + CRM note are persisted, is a no-op for POLL leads, SENDS
+  // NOTHING here (it persists a durable finalization intent + artifact-wait deadline;
+  // a sweep delivers the final status later with artifacts), and never fails the
+  // webhook.
+  await reportQueueStatusIfTerminal(result.record, input.config ?? env);
+
   logger.info(
     { event: event.event, callId: call.call_id, changed: result.changed },
     'retell webhook applied',
@@ -248,6 +256,36 @@ async function deliverCallNoteIfTerminal(
         err: error instanceof Error ? error.name : 'unknown',
       },
       'CRM call-note delivery raised unexpectedly; webhook still acknowledged',
+    );
+  }
+}
+
+/**
+ * Enqueues Guided Boost finalization for a terminal QUEUE call, exactly like
+ * `deliverCallNoteIfTerminal` is secondary to the local record.
+ *
+ * Only fires on a terminal CallRecord. `enqueueQueueFinalization` is the
+ * QUEUE/idempotency gate (a POLL lead, or a lead already pending/sent/failed, is a
+ * no-op) and never throws; this wrapper adds a final guard so a reporting fault can
+ * never fail the webhook. It SENDS NOTHING — it persists a durable finalization
+ * intent + a bounded artifact-wait deadline; the finalization sweep sends the final
+ * status later, enriched with the artifacts that arrive on `call_analyzed`.
+ */
+async function reportQueueStatusIfTerminal(
+  record: CallRecord | undefined,
+  config: Env,
+): Promise<void> {
+  if (!record || !TERMINAL_CALL_STATUSES.has(record.status)) return;
+  try {
+    await enqueueQueueFinalization(record, { config });
+  } catch (error) {
+    logger.error(
+      {
+        callId: record.retellCallId,
+        leadId: record.leadId,
+        err: error instanceof Error ? error.name : 'unknown',
+      },
+      'Guided Boost finalization enqueue raised unexpectedly; webhook still acknowledged',
     );
   }
 }

@@ -29,6 +29,13 @@ vi.mock('../src/services/callNoteDelivery.service.js', () => ({
   deliverCallNote: (...args: unknown[]) => deliverCallNote(...args),
 }));
 
+// The Guided Boost finalization enqueue is wired into the webhook; mock it so the
+// existing webhook tests stay isolated and we can assert it is triggered on terminal.
+const enqueueQueueFinalization = vi.fn();
+vi.mock('../src/services/guidedBoostStatus.service.js', () => ({
+  enqueueQueueFinalization: (...args: unknown[]) => enqueueQueueFinalization(...args),
+}));
+
 const { processRetellWebhook } = await import('../src/services/retellWebhook.service.js');
 
 const KEY = 'retell-test-key-never-real';
@@ -48,6 +55,7 @@ beforeEach(() => {
   scheduleRetryOrComplete.mockResolvedValue('scheduled');
   completeReconciledCall.mockResolvedValue(false);
   deliverCallNote.mockResolvedValue('sent');
+  enqueueQueueFinalization.mockResolvedValue({ enqueued: false, skipped: 'not_queue' });
 });
 
 const retryConfig = () =>
@@ -112,6 +120,52 @@ describe('processRetellWebhook — no-answer retry (when LEAD_RETRY_ENABLED)', (
 
     expect(scheduleRetryOrComplete).not.toHaveBeenCalled();
     expect(completeCallingLead).toHaveBeenCalledWith('lead-1');
+  });
+});
+
+describe('processRetellWebhook — Guided Boost status reporting hook', () => {
+  const sign2 = (body: string) => sign(body, KEY, NOW);
+  const defaultConfig = () => parseEnv({ DATABASE_URL: 'postgresql://u:p@localhost:5432/db' });
+
+  it('enqueues finalization on a terminal call (the QUEUE gate lives inside it)', async () => {
+    applyWebhookCallEvent.mockResolvedValue({
+      matched: true,
+      changed: true,
+      record: { leadId: 'lead-1', status: CallStatus.COMPLETED },
+    });
+    const body = JSON.stringify({ event: 'call_analyzed', call: { call_id: 'call_1', call_status: 'ended' } });
+
+    await processRetellWebhook({ rawBody: body, signature: sign2(body), apiKey: KEY, now: NOW, config: defaultConfig() });
+
+    expect(enqueueQueueFinalization).toHaveBeenCalledTimes(1);
+    expect(enqueueQueueFinalization.mock.calls[0]![0]).toMatchObject({ leadId: 'lead-1', status: CallStatus.COMPLETED });
+  });
+
+  it('does NOT enqueue finalization for a non-terminal call (call_started / IN_PROGRESS)', async () => {
+    applyWebhookCallEvent.mockResolvedValue({
+      matched: true,
+      changed: true,
+      record: { leadId: 'lead-1', status: CallStatus.IN_PROGRESS },
+    });
+    const body = JSON.stringify({ event: 'call_started', call: { call_id: 'call_1', call_status: 'ongoing' } });
+
+    await processRetellWebhook({ rawBody: body, signature: sign2(body), apiKey: KEY, now: NOW, config: defaultConfig() });
+
+    expect(enqueueQueueFinalization).not.toHaveBeenCalled();
+  });
+
+  it('an enqueue fault never fails the webhook (processed is still returned)', async () => {
+    applyWebhookCallEvent.mockResolvedValue({
+      matched: true,
+      changed: true,
+      record: { leadId: 'lead-1', status: CallStatus.COMPLETED },
+    });
+    enqueueQueueFinalization.mockRejectedValue(new Error('reporter blew up'));
+    const body = JSON.stringify({ event: 'call_analyzed', call: { call_id: 'call_1', call_status: 'ended' } });
+
+    const result = await processRetellWebhook({ rawBody: body, signature: sign2(body), apiKey: KEY, now: NOW, config: defaultConfig() });
+
+    expect(result.status).toBe('processed');
   });
 });
 

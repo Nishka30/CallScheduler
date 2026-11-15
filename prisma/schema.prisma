@@ -42,6 +42,19 @@ enum CallStatus {
   UNKNOWN // provider state not yet reconciled
 }
 
+/// Where a lead entered the AI Caller workflow.
+///
+/// `POLL` is the original incremental Lead API listing (`runLeadPoll`); every
+/// existing record predates this column and is therefore `POLL` by default.
+/// `QUEUE` is the Guided Boost queue hand-off (`GET /api/caller/queue`), where
+/// Guided Boost owns eligibility and the timeout, and CallScheduler makes exactly
+/// one attempt. The column only CLASSIFIES the origin; no behavior is attached to
+/// it in this migration.
+enum LeadSource {
+  POLL
+  QUEUE
+}
+
 /// Structured business result of a completed call attempt.
 enum CallOutcome {
   INTERESTED
@@ -117,6 +130,54 @@ model LeadProcessing {
   /// When the review note was confirmed delivered.
   reviewNoteSentAt        DateTime? @db.Timestamptz(3)
 
+  // --- Guided Boost queue hand-off (additive; no behavior attached yet) ---
+  // These fields are populated only for QUEUE-sourced leads. For every existing
+  // and every POLL-sourced lead they stay at their defaults (source POLL, the
+  // rest null/0), so the existing poll path is completely unaffected.
+
+  /// How the lead entered the workflow. Defaults to POLL so all existing rows
+  /// and all poll-created rows keep their current meaning.
+  source LeadSource @default(POLL)
+
+  /// When Guided Boost offered this lead on the queue (first time we saw it).
+  offeredAt DateTime? @db.Timestamptz(3)
+
+  /// Authoritative UTC deadline from Guided Boost (`call_before`): the call must
+  /// be placed before this instant. Guided Boost owns the timeout, so this is a
+  /// timing fact, not a locally enforced business window.
+  callBeforeAt DateTime? @db.Timestamptz(3)
+
+  /// When the one-time `call_in_progress` extension signal was sent to Guided
+  /// Boost near the deadline. Null until sent; set once so it is never re-sent.
+  callInProgressSentAt DateTime? @db.Timestamptz(3)
+
+  /// Final-status reporting to Guided Boost (`POST /api/caller/leads/<id>/status`).
+  /// null | pending | sent | failed. Null until a terminal outcome needs a report.
+  statusReportStatus String? @db.VarChar(16)
+
+  /// How many times final-status delivery has been attempted.
+  statusReportAttempts Int @default(0)
+
+  /// Sanitized failure category for the last report attempt (never a raw body/PII).
+  statusReportError String? @db.VarChar(200)
+
+  /// When the final status was confirmed delivered to Guided Boost.
+  statusReportedAt DateTime? @db.Timestamptz(3)
+
+  /// When the next final-status delivery attempt becomes due (backoff + lease).
+  /// Used ONLY by the QUEUE status-report reconciliation sweep to space retries
+  /// and to lease a row to a single worker. Null once `sent`.
+  statusReportNextAttemptAt DateTime? @db.Timestamptz(3)
+
+  /// The final Guided Boost status actually reported (e.g. `reached_no_booking`).
+  /// Guards against sending a contradictory second final status.
+  lastFinalStatus String? @db.VarChar(32)
+
+  /// The optional non-PII reason that accompanies the final status (e.g. `busy`,
+  /// `no final result from provider`). Persisted so a deferred/retried send carries
+  /// the same reason the outcome mapping produced, without re-deriving it.
+  statusReportReason String? @db.VarChar(200)
+
   /// The `updated_at` of the lead row that produced the current decision.
   /// Lets us see that a later appearance was only an update, not a new inquiry.
   leadUpdatedAt DateTime? @db.Timestamptz(3)
@@ -132,6 +193,10 @@ model LeadProcessing {
   @@index([decisionReason])
   @@index([status, nextRetryAt])
   @@index([reviewNoteStatus, reviewNoteNextAttemptAt])
+  // Queue deadline lookup: find QUEUE leads by their call_before deadline.
+  @@index([source, callBeforeAt])
+  // Final-status reconciliation: find reports still pending/failed to resend.
+  @@index([statusReportStatus])
   @@map("lead_processing")
 }
 

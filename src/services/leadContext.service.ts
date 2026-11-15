@@ -259,8 +259,14 @@ export function buildLeadCallContext(
   return context;
 }
 
-/** Keeps only well-formed answers; a malformed entry is dropped, not guessed. */
-function normalizeAnswers(raw: unknown): FormAnswer[] {
+/**
+ * Keeps only well-formed answers; a malformed entry is dropped, not guessed.
+ *
+ * Exported so the Guided Boost queue adapter can normalize an offered lead's
+ * `answers` into the exact same internal `FormAnswer[]` representation the poll
+ * path uses — the single normalizer, never a second one.
+ */
+export function normalizeAnswers(raw: unknown): FormAnswer[] {
   if (!Array.isArray(raw)) return [];
 
   const answers: FormAnswer[] = [];

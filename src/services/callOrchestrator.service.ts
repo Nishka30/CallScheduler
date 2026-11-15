@@ -9,7 +9,11 @@ import type { LeadDetail, LeadListRow } from '../integrations/leadApi/schemas.js
 import { evaluateListEligibility, readPhoneVerdict } from './leadEligibility.service.js';
 import { evaluateCrmGate } from './crmGate.service.js';
 import { evaluateCallWindow, isHoldActive } from './callWindow.service.js';
-import { buildLeadCallContext, describeContextForLog } from './leadContext.service.js';
+import {
+  buildLeadCallContext,
+  describeContextForLog,
+  type LeadCallContext,
+} from './leadContext.service.js';
 import { buildAgentDynamicVariables } from '../integrations/retell/dynamicVariables.js';
 import {
   claimEligibleLead,
@@ -380,42 +384,95 @@ export async function initiateCallForLead(
     metadata: { callRecordId: attempt.record.id },
   });
 
-  // 10. Place the call. The client also re-checks the switch and validates the
-  //     E.164 number; it is single-shot and never retries.
-  //     Dynamic variables are the TWO confirmed Travel Call Agent prompt
-  //     variables only (customer_name, brand_name); missing values are omitted,
-  //     and no other variable is invented. metadata carries only opaque ids.
+  // 10. Place the call. Every gate and the atomic claim/CALLING/attempt
+  //     bookkeeping are already done above; hand off to the reusable placeCall
+  //     primitive for the pure dialling mechanics (dynamic variables, the
+  //     single-shot Retell request, provider-id linking, and failure
+  //     classification). placeCall makes no eligibility/claim/duplicate decision.
+  const retellClient = deps.retellClient ?? new RetellClient({}, config);
+  return placeCall({
+    leadId,
+    toNumber,
+    context,
+    callRecordId: attempt.record.id,
+    processingId: calling.id,
+    processingVersion: calling.version,
+    retellClient,
+    now,
+  });
+}
+
+/** Everything placeCall needs to dial an ALREADY-APPROVED, ALREADY-CLAIMED lead. */
+export interface PlaceCallParams {
+  leadId: string;
+  /** Validated E.164 destination. The caller is responsible for validation. */
+  toNumber: string;
+  /** Built lead context; placeCall derives the agent dynamic variables from it. */
+  context: LeadCallContext;
+  /** The already-opened active CallRecord id (claim + attempt done by the caller). */
+  callRecordId: string;
+  /** The CALLING processing row id/version, for terminal failure finalisation. */
+  processingId: string;
+  processingVersion: number;
+  /** Retell client to dial with (already constructed with the right config). */
+  retellClient: RetellClient;
+  /** Clock, injected for tests. */
+  now: () => Date;
+}
+
+/**
+ * Places an ALREADY-APPROVED, ALREADY-CLAIMED outbound call and classifies the
+ * provider result. This is the reusable call-placement primitive.
+ *
+ * By the time it runs, the caller has ALREADY performed every gate and all the
+ * atomic bookkeeping: master switch, lead eligibility, CRM routing gate, phone
+ * validation, caller-hold window, the version-guarded claim, PROCESSING->CALLING,
+ * and the duplicate-safe attempt record. placeCall therefore makes NO
+ * eligibility/claim/duplicate/retry/booking/status decisions — it only:
+ *   1. builds the Travel Call Agent dynamic variables from the context (the TWO
+ *      confirmed prompt variables only; missing values omitted, nothing invented),
+ *   2. invokes Retell single-shot (the client re-checks the switch + E.164),
+ *   3. links the provider call id and records the RETELL_INITIATED event, and
+ *   4. classifies any provider failure (uncertain -> left CALLING for
+ *      reconciliation; permanent -> FAILED) via the existing handleDialFailure.
+ *
+ * The behavior is identical to the inline step 10 it was extracted from.
+ */
+export async function placeCall(params: PlaceCallParams): Promise<OrchestratorResult> {
+  const { leadId, toNumber, context, callRecordId, processingId, processingVersion, retellClient, now } =
+    params;
+
   const dynamicVariables = buildAgentDynamicVariables(context);
   try {
-    const call = await (deps.retellClient ?? new RetellClient({}, config)).createPhoneCall({
+    const call = await retellClient.createPhoneCall({
       toNumber,
-      idempotencyKey: attempt.record.id,
-      metadata: { leadId, callRecordId: attempt.record.id },
+      idempotencyKey: callRecordId,
+      metadata: { leadId, callRecordId },
       ...(Object.keys(dynamicVariables).length > 0 ? { dynamicVariables } : {}),
     });
 
-    await attachProviderCallId(attempt.record.id, call.callId, now());
+    await attachProviderCallId(callRecordId, call.callId, now());
 
     await recordLifecycle({
       leadId,
       event: LifecycleEvent.RETELL_INITIATED,
       status: LifecycleStatus.INITIATED,
       detail: 'Retell accepted the outbound call',
-      metadata: { callRecordId: attempt.record.id, retellCallId: call.callId },
+      metadata: { callRecordId, retellCallId: call.callId },
     });
 
     logger.info(
-      { leadId, callRecordId: attempt.record.id, retellCallId: call.callId },
+      { leadId, callRecordId, retellCallId: call.callId },
       'call orchestrator: outbound call initiated',
     );
     return {
       outcome: 'call_initiated',
       leadId,
-      callRecordId: attempt.record.id,
+      callRecordId,
       retellCallId: call.callId,
     };
   } catch (error) {
-    return handleDialFailure(leadId, attempt.record.id, calling.id, calling.version, error);
+    return handleDialFailure(leadId, callRecordId, processingId, processingVersion, error);
   }
 }
 

@@ -34,6 +34,12 @@ const files = sourceFiles(SRC).map((path) => ({
 const RETELL_CLIENT = '/src/integrations/retell/client.ts';
 /** The authorised CRM write client (appointments; brand-booking, per David's briefs). */
 const CALENDAR_CLIENT = '/src/integrations/leadApi/calendar.client.ts';
+/**
+ * The authorised Guided Boost caller FINAL-STATUS write client. Posts ONLY to
+ * `/api/caller/leads/<id>/status` (the caller endpoint, per David's confirmed
+ * contract) — never to `/api/crm/*`. Carries the caller write identity.
+ */
+const CALLER_STATUS_CLIENT = '/src/integrations/guidedBoost/callerStatus.client.ts';
 /** The read-only Lead API client (lead list/detail/person). */
 const LEAD_READ_CLIENT = '/src/integrations/leadApi/client.ts';
 
@@ -47,10 +53,12 @@ describe('no UNAUTHORISED CRM writes exist in the codebase', () => {
     expect(offenders.map((f) => f.path)).toEqual([]);
   });
 
-  it('issues write verbs only from the Retell and calendar clients', () => {
+  it('issues write verbs only from the Retell, calendar and caller-status clients', () => {
     // Matches a real request (`method: <verb>`) or a method-union type annotation.
     const offenders = files.filter(({ text }) => /method:\s*['"`]POST['"`]/i.test(text));
-    expect(offenders.map((f) => f.path).sort()).toEqual([CALENDAR_CLIENT, RETELL_CLIENT].sort());
+    expect(offenders.map((f) => f.path).sort()).toEqual(
+      [CALENDAR_CLIENT, RETELL_CLIENT, CALLER_STATUS_CLIENT].sort(),
+    );
   });
 
   it('keeps the Lead API READ client strictly GET-only', () => {
@@ -75,13 +83,21 @@ describe('no UNAUTHORISED CRM writes exist in the codebase', () => {
     }
   });
 
-  it('sends the X-Agent-Email write identity only from the calendar client', () => {
-    // The fixed service identity is required on authorised CRM writes; it must
-    // appear only in the calendar client and nowhere else.
+  it('sends the X-Agent-Email write identity only from the authorised write clients', () => {
+    // The fixed service identity is required on authorised writes; it must appear
+    // only in the calendar client (CRM appointments/notes) and the caller-status
+    // client (Guided Boost final status), and nowhere else.
     const offenders = files.filter(
       ({ text }) => /['"]X-Agent-Email['"]/i.test(text) || /['"]X-Agent-Name['"]/i.test(text),
     );
-    expect(offenders.map((f) => f.path)).toEqual([CALENDAR_CLIENT]);
+    expect(offenders.map((f) => f.path).sort()).toEqual([CALENDAR_CLIENT, CALLER_STATUS_CLIENT].sort());
+  });
+
+  it('keeps the caller-status client pointed only at the caller endpoint, never the CRM', () => {
+    const statusClient = files.find((f) => f.path === CALLER_STATUS_CLIENT);
+    expect(statusClient).toBeDefined();
+    expect(statusClient!.text).toContain('/api/caller/leads/');
+    expect(statusClient!.text).not.toContain('/api/crm/');
   });
 
   // Matches an assignment of a literal value, e.g. `lead_status: 'Booked'`.

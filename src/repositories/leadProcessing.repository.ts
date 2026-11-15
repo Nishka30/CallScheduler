@@ -1,4 +1,4 @@
-import { Prisma, ProcessingStatus, type LeadProcessing } from '@prisma/client';
+import { LeadSource, Prisma, ProcessingStatus, type LeadProcessing } from '@prisma/client';
 import { prisma } from '../lib/prisma.js';
 
 /** Max length of the stored `lastError` column. */
@@ -46,6 +46,59 @@ export async function ensureProcessingRecord(
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
       const existing = await prisma.leadProcessing.findUniqueOrThrow({ where: { leadId } });
+      return { record: existing, created: false };
+    }
+    throw error;
+  }
+}
+
+/**
+ * Idempotently records a Guided Boost QUEUE-sourced lead in `lead_processing`.
+ *
+ * Creates the row the first time the lead is offered, stamping the queue origin
+ * (`source = QUEUE`) and the queue timing fields (`offeredAt`, `callBeforeAt`),
+ * plus the given processing `status` (ELIGIBLE for a callable lead, or SKIPPED for
+ * one rejected on a technical check such as an invalid phone).
+ *
+ * When a row for this `leadId` already exists it is a NO-OP that returns
+ * `created: false` with the existing row — exactly how `ensureProcessingRecord`
+ * behaves for the poll path. This is what makes repeated queue offers for the same
+ * lead idempotent: the second and later offers never create a second active record
+ * (and therefore can never lead to a second call). The existing state always wins;
+ * an already-advanced lead (PROCESSING/CALLING/COMPLETED/…) or an existing POLL row
+ * is never downgraded, re-opened, or reclassified here.
+ *
+ * Only ever used for QUEUE leads; POLL rows are created elsewhere and untouched.
+ */
+export async function ingestQueueLeadProcessing(input: {
+  leadId: string;
+  status: typeof ProcessingStatus.ELIGIBLE | typeof ProcessingStatus.SKIPPED;
+  offeredAt: Date;
+  callBeforeAt: Date;
+  decisionReason?: string;
+  decisionDetail?: string;
+  now?: Date;
+}): Promise<{ record: LeadProcessing; created: boolean }> {
+  const decidedAt = input.now ?? new Date();
+  try {
+    const record = await prisma.leadProcessing.create({
+      data: {
+        leadId: input.leadId,
+        source: LeadSource.QUEUE,
+        status: input.status,
+        offeredAt: input.offeredAt,
+        callBeforeAt: input.callBeforeAt,
+        decidedAt,
+        ...(input.decisionReason === undefined ? {} : { decisionReason: input.decisionReason }),
+        ...(input.decisionDetail === undefined ? {} : { decisionDetail: input.decisionDetail }),
+      },
+    });
+    return { record, created: true };
+  } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+      const existing = await prisma.leadProcessing.findUniqueOrThrow({
+        where: { leadId: input.leadId },
+      });
       return { record: existing, created: false };
     }
     throw error;
@@ -313,7 +366,12 @@ export async function scheduleRetryOrComplete(
       return 'noop';
     }
 
-    const reschedule = current.attemptCount < maxAttempts;
+    // QUEUE contract: exactly one call attempt. A no-answer on a QUEUE lead is
+    // TERMINAL — it is never rescheduled into RETRY_PENDING (Guided Boost owns any
+    // follow-up and will learn the outcome via the final-status report). The POLL
+    // retry decision below is completely unchanged for POLL leads.
+    const isQueue = current.source === LeadSource.QUEUE;
+    const reschedule = !isQueue && current.attemptCount < maxAttempts;
     const { count } = await tx.leadProcessing.updateMany({
       where: { id: current.id, version: current.version, status: ProcessingStatus.CALLING },
       data: reschedule
@@ -332,7 +390,7 @@ export async function scheduleRetryOrComplete(
             claimedAt: null,
             claimedBy: null,
             nextRetryAt: null,
-            decisionReason: 'no_answer_max_attempts',
+            decisionReason: isQueue ? 'queue_no_answer_terminal' : 'no_answer_max_attempts',
             decidedAt: now,
           },
     });
@@ -364,6 +422,10 @@ export async function findDueRetries(
 ): Promise<DueRetryLead[]> {
   return prisma.leadProcessing.findMany({
     where: {
+      // POLL-only: the no-answer retry mechanism is a poll-path feature. A QUEUE
+      // lead is one-attempt and must never be re-dialled, so it is never selected
+      // here even if it somehow reached RETRY_PENDING.
+      source: LeadSource.POLL,
       status: ProcessingStatus.RETRY_PENDING,
       nextRetryAt: { lte: now },
       attemptCount: { lt: maxAttempts },
@@ -511,6 +573,319 @@ export async function requeueForRetry(
 /** Looks up a single lead's processing state. */
 export async function findByLeadId(leadId: string): Promise<LeadProcessing | null> {
   return prisma.leadProcessing.findUnique({ where: { leadId } });
+}
+
+// ---------------------------------------------------------------------------
+// Guided Boost final-status reporting state (QUEUE leads only).
+// These touch ONLY the statusReport* columns + lastFinalStatus, independent of
+// processing status, so reporting can never change a lead's call lifecycle.
+// ---------------------------------------------------------------------------
+
+/**
+ * Records a successful (or conflict-resolved) final-status report: marks it `sent`,
+ * stamps the time and the reported final status, clears the error, and counts the
+ * attempt. Used for a 2xx AND for a 409 (a different final already won — the report
+ * is closed either way; we never keep retrying). Keyed by unique `leadId`.
+ */
+export async function markStatusReportSent(
+  leadId: string,
+  finalStatus: string,
+  now: Date = new Date(),
+): Promise<void> {
+  await prisma.leadProcessing.update({
+    where: { leadId },
+    data: {
+      statusReportStatus: 'sent',
+      statusReportedAt: now,
+      lastFinalStatus: finalStatus.slice(0, 32),
+      statusReportError: null,
+      statusReportNextAttemptAt: null,
+      statusReportAttempts: { increment: 1 },
+    },
+  });
+}
+
+/**
+ * Records a FAILED (retryable) final-status report: marks it `failed`, counts the
+ * attempt, stores a short sanitized error, PERSISTS the attempted final status
+ * (`lastFinalStatus`) so reconciliation can re-send the AUTHORITATIVE status without
+ * re-deriving it, and schedules the next attempt (`statusReportNextAttemptAt`). The
+ * call itself is already processed locally; the reconciliation sweep re-sends.
+ * Keyed by unique `leadId`.
+ */
+export async function markStatusReportFailed(
+  leadId: string,
+  finalStatus: string,
+  error: string,
+  nextAttemptAt: Date,
+): Promise<void> {
+  await prisma.leadProcessing.update({
+    where: { leadId },
+    data: {
+      statusReportStatus: 'failed',
+      statusReportAttempts: { increment: 1 },
+      statusReportError: sanitizeErrorMessage(error).slice(0, 200),
+      lastFinalStatus: finalStatus.slice(0, 32),
+      statusReportNextAttemptAt: nextAttemptAt,
+    },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Active-call deadline monitor (QUEUE, call_in_progress). Touches ONLY the queue
+// timing fields (callInProgressSentAt, callBeforeAt), always guarded on an ACTIVE
+// (CALLING) QUEUE lead, so it can never affect a call's placement or a terminal lead.
+// ---------------------------------------------------------------------------
+
+/** A QUEUE call approaching its deadline that may need a `call_in_progress`. */
+export interface DueDeadlineLead {
+  leadId: string;
+  callBeforeAt: Date;
+}
+
+/**
+ * Active QUEUE calls whose authoritative deadline is within `leadMs` and that have
+ * NOT yet had a `call_in_progress` sent: `source = QUEUE`, `status = CALLING`,
+ * `callInProgressSentAt IS NULL`, `callBeforeAt <= now + leadMs`. Oldest-deadline
+ * first. A cheap LOCAL query; it selects only active calls, so a terminal lead is
+ * never returned.
+ */
+export async function findActiveQueueCallsNearDeadline(
+  now: Date,
+  leadMs: number,
+  limit: number,
+): Promise<DueDeadlineLead[]> {
+  const threshold = new Date(now.getTime() + leadMs);
+  const rows = await prisma.leadProcessing.findMany({
+    where: {
+      source: LeadSource.QUEUE,
+      status: ProcessingStatus.CALLING,
+      callInProgressSentAt: null,
+      callBeforeAt: { not: null, lte: threshold },
+    },
+    orderBy: { callBeforeAt: 'asc' },
+    take: limit,
+    select: { leadId: true, callBeforeAt: true },
+  });
+  return rows.flatMap((r) =>
+    r.callBeforeAt === null ? [] : [{ leadId: r.leadId, callBeforeAt: r.callBeforeAt }],
+  );
+}
+
+/**
+ * Claims the right to send ONE `call_in_progress` for an active QUEUE call. CAS
+ * matching `source = QUEUE` + `status = CALLING` + `callInProgressSentAt IS NULL`,
+ * stamping `callInProgressSentAt = now`. This single atomic update enforces, at once:
+ *   - once-only  (the null guard),
+ *   - concurrency (exactly one worker gets `count === 1`), and
+ *   - the terminal race (if a webhook already moved the lead out of CALLING, it
+ *     matches nothing and the monitor skips — a final status is never clobbered).
+ * Returns true for the single winner. On a send FAILURE the caller resets it via
+ * `resetCallInProgressSend` so a later cycle can retry (a re-send is safe: Guided
+ * Boost grants at most one extension server-side).
+ */
+export async function claimCallInProgressSend(leadId: string, now: Date): Promise<boolean> {
+  const { count } = await prisma.leadProcessing.updateMany({
+    where: {
+      leadId,
+      source: LeadSource.QUEUE,
+      status: ProcessingStatus.CALLING,
+      callInProgressSentAt: null,
+    },
+    data: { callInProgressSentAt: now },
+  });
+  return count === 1;
+}
+
+/**
+ * Releases a `call_in_progress` claim after a FAILED send, so the monitor can try
+ * again next cycle. Guarded on an active QUEUE call, so it never touches a lead that
+ * has since gone terminal.
+ */
+export async function resetCallInProgressSend(leadId: string): Promise<void> {
+  await prisma.leadProcessing.updateMany({
+    where: { leadId, source: LeadSource.QUEUE, status: ProcessingStatus.CALLING },
+    data: { callInProgressSentAt: null },
+  });
+}
+
+/**
+ * Persists a Guided-Boost-extended deadline. The new value is the authoritative
+ * `call_before` from the extension response — never a locally computed time. Guarded
+ * on an active QUEUE call so an extension can never resurrect a terminal lead.
+ */
+export async function updateCallBeforeAt(leadId: string, callBeforeAt: Date): Promise<void> {
+  await prisma.leadProcessing.updateMany({
+    where: { leadId, source: LeadSource.QUEUE, status: ProcessingStatus.CALLING },
+    data: { callBeforeAt },
+  });
+}
+
+/** A QUEUE final-status delivery due for a send (pending finalization, or a retry). */
+export interface DueStatusReport {
+  leadId: string;
+  lastFinalStatus: string;
+  statusReportReason: string | null;
+  statusReportAttempts: number;
+}
+
+/**
+ * Enqueues a QUEUE terminal call for bounded-wait finalization. Idempotent: CAS that
+ * marks `statusReportStatus = 'pending'` ONLY when it is still null (no finalization
+ * yet), persisting the authoritative final status + reason and the artifact-wait
+ * deadline (`statusReportNextAttemptAt`). A duplicate terminal webhook, or a lead
+ * already pending/sent/failed, matches nothing and is a no-op. Never sends anything
+ * and never touches the call lifecycle. Returns whether a new finalization was armed.
+ */
+export async function markStatusReportPending(
+  leadId: string,
+  finalStatus: string,
+  reason: string | undefined,
+  nextAttemptAt: Date,
+): Promise<boolean> {
+  const { count } = await prisma.leadProcessing.updateMany({
+    where: { leadId, source: LeadSource.QUEUE, statusReportStatus: null },
+    data: {
+      statusReportStatus: 'pending',
+      lastFinalStatus: finalStatus.slice(0, 32),
+      statusReportReason: reason === undefined ? null : reason.slice(0, 200),
+      statusReportNextAttemptAt: nextAttemptAt,
+    },
+  });
+  return count === 1;
+}
+
+/**
+ * Pending QUEUE finalizations whose artifact-wait window has elapsed: `source = QUEUE`,
+ * `statusReportStatus = 'pending'`, due (`statusReportNextAttemptAt <= now`), with a
+ * persisted `lastFinalStatus`. Oldest-due first. Selects only status-report state —
+ * never the call lifecycle — so it can never cause a call.
+ */
+export async function findPendingFinalizations(
+  now: Date,
+  limit: number,
+): Promise<DueStatusReport[]> {
+  const rows = await prisma.leadProcessing.findMany({
+    where: {
+      source: LeadSource.QUEUE,
+      statusReportStatus: 'pending',
+      lastFinalStatus: { not: null },
+      OR: [{ statusReportNextAttemptAt: null }, { statusReportNextAttemptAt: { lte: now } }],
+    },
+    orderBy: { statusReportNextAttemptAt: 'asc' },
+    take: limit,
+    select: {
+      leadId: true,
+      lastFinalStatus: true,
+      statusReportReason: true,
+      statusReportAttempts: true,
+    },
+  });
+  return rows.flatMap((r) =>
+    r.lastFinalStatus === null
+      ? []
+      : [
+          {
+            leadId: r.leadId,
+            lastFinalStatus: r.lastFinalStatus,
+            statusReportReason: r.statusReportReason,
+            statusReportAttempts: r.statusReportAttempts,
+          },
+        ],
+  );
+}
+
+/**
+ * Leases a due pending finalization to a single worker before a send, so two sweeps
+ * cannot both post it. CAS matching `source = QUEUE` + `statusReportStatus = 'pending'`
+ * + a DUE deadline, pushing the deadline forward. Exactly one worker wins.
+ */
+export async function claimPendingFinalization(
+  leadId: string,
+  now: Date,
+  leaseUntil: Date,
+): Promise<boolean> {
+  const { count } = await prisma.leadProcessing.updateMany({
+    where: {
+      leadId,
+      source: LeadSource.QUEUE,
+      statusReportStatus: 'pending',
+      OR: [{ statusReportNextAttemptAt: null }, { statusReportNextAttemptAt: { lte: now } }],
+    },
+    data: { statusReportNextAttemptAt: leaseUntil },
+  });
+  return count === 1;
+}
+
+/**
+ * QUEUE final-status reports due for a re-send: `source = QUEUE`,
+ * `statusReportStatus = 'failed'`, under the attempt cap, past the backoff, and
+ * carrying a persisted `lastFinalStatus` (so the authoritative status can be resent
+ * without re-deriving it). Oldest-due first. A cheap LOCAL query for the
+ * reconciliation sweep. It selects ONLY status-report state — it never looks at,
+ * or touches, a lead's call/processing lifecycle, so it can never cause a call.
+ */
+export async function findStatusReportsForRetry(
+  now: Date,
+  maxAttempts: number,
+  limit: number,
+): Promise<DueStatusReport[]> {
+  const rows = await prisma.leadProcessing.findMany({
+    where: {
+      source: LeadSource.QUEUE,
+      statusReportStatus: 'failed',
+      statusReportAttempts: { lt: maxAttempts },
+      lastFinalStatus: { not: null },
+      OR: [{ statusReportNextAttemptAt: null }, { statusReportNextAttemptAt: { lte: now } }],
+    },
+    orderBy: { statusReportNextAttemptAt: 'asc' },
+    take: limit,
+    select: {
+      leadId: true,
+      lastFinalStatus: true,
+      statusReportReason: true,
+      statusReportAttempts: true,
+    },
+  });
+  // lastFinalStatus is non-null by the query filter; narrow the type for callers.
+  return rows.flatMap((r) =>
+    r.lastFinalStatus === null
+      ? []
+      : [
+          {
+            leadId: r.leadId,
+            lastFinalStatus: r.lastFinalStatus,
+            statusReportReason: r.statusReportReason,
+            statusReportAttempts: r.statusReportAttempts,
+          },
+        ],
+  );
+}
+
+/**
+ * Leases a due failed status report to a single worker before a re-send, so two
+ * concurrent sweeps cannot both post it in the same window. CAS matching
+ * `source = QUEUE` + `statusReportStatus = 'failed'` + a DUE `statusReportNextAttemptAt`
+ * (null or past), pushing `statusReportNextAttemptAt` forward to `leaseUntil`. Exactly
+ * one worker gets `count === 1`; the other sees a future lease and skips. Does NOT
+ * change the status or the attempt count (the subsequent mark does), and NEVER
+ * touches the call/processing lifecycle.
+ */
+export async function claimStatusReportForRetry(
+  leadId: string,
+  now: Date,
+  leaseUntil: Date,
+): Promise<boolean> {
+  const { count } = await prisma.leadProcessing.updateMany({
+    where: {
+      leadId,
+      source: LeadSource.QUEUE,
+      statusReportStatus: 'failed',
+      OR: [{ statusReportNextAttemptAt: null }, { statusReportNextAttemptAt: { lte: now } }],
+    },
+    data: { statusReportNextAttemptAt: leaseUntil },
+  });
+  return count === 1;
 }
 
 /**
@@ -722,7 +1097,11 @@ export async function findStuckCalling(olderThan: Date, limit: number): Promise<
  */
 export async function findStuckProcessing(olderThan: Date, limit: number): Promise<ReconcileLead[]> {
   return prisma.leadProcessing.findMany({
-    where: { status: ProcessingStatus.PROCESSING, claimedAt: { lte: olderThan } },
+    // POLL-only: requeuing PROCESSING -> ELIGIBLE is a poll-path recovery that
+    // leads back to the ELIGIBLE backstop (and the orchestrator). A stuck QUEUE
+    // lead is left in place (auditable) for Guided Boost's deadline to resolve;
+    // it must never be bounced back toward a second call attempt.
+    where: { source: LeadSource.POLL, status: ProcessingStatus.PROCESSING, claimedAt: { lte: olderThan } },
     orderBy: { claimedAt: 'asc' },
     take: limit,
     select: RECONCILE_SELECT,
@@ -739,7 +1118,11 @@ export async function findEligibleNotCalled(
   limit: number,
 ): Promise<ReconcileLead[]> {
   return prisma.leadProcessing.findMany({
-    where: { status: ProcessingStatus.ELIGIBLE, decidedAt: { lte: olderThan } },
+    // POLL-only: the ELIGIBLE backstop re-hands leads to `initiateCallForLead`
+    // (which carries the poll-specific crm_route/eligibility gates). A QUEUE lead
+    // must NEVER reach that path, so it is excluded here regardless of how it
+    // became ELIGIBLE. This is the primary guard enforcing the one-call invariant.
+    where: { source: LeadSource.POLL, status: ProcessingStatus.ELIGIBLE, decidedAt: { lte: olderThan } },
     orderBy: { decidedAt: 'asc' },
     take: limit,
     select: RECONCILE_SELECT,
@@ -823,7 +1206,14 @@ export async function findReevaluableLeads(
 ): Promise<ReevaluableLead[]> {
   if (reasons.length === 0) return [];
   return prisma.leadProcessing.findMany({
-    where: { status: ProcessingStatus.NEEDS_REVIEW, decisionReason: { in: [...reasons] } },
+    // POLL-only: the NEEDS_REVIEW re-evaluation sweep promotes a lead to ELIGIBLE
+    // and then hands it to `initiateCallForLead`. A QUEUE lead must never reach
+    // that path, so it is never selected for re-evaluation.
+    where: {
+      source: LeadSource.POLL,
+      status: ProcessingStatus.NEEDS_REVIEW,
+      decisionReason: { in: [...reasons] },
+    },
     orderBy: { decidedAt: 'asc' },
     take: limit,
     select: { id: true, leadId: true, decisionReason: true, decidedAt: true, version: true },
