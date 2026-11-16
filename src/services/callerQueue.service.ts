@@ -188,8 +188,8 @@ export async function ingestQueueLead(
     await ingestQueueLeadProcessing({
       leadId,
       status: ProcessingStatus.SKIPPED,
-      offeredAt: queueLead.offeredAt,
-      callBeforeAt: queueLead.callBeforeAt,
+      ...(queueLead.offeredAt ? { offeredAt: queueLead.offeredAt } : {}),
+      ...(queueLead.callBeforeAt ? { callBeforeAt: queueLead.callBeforeAt } : {}),
       decisionReason: 'phone_not_validated',
       decisionDetail: verdict.status === 'invalid' ? verdict.detail : 'phone verdict unreadable',
       now: now(),
@@ -217,8 +217,8 @@ export async function ingestQueueLead(
   const ingest = await ingestQueueLeadProcessing({
     leadId,
     status: ProcessingStatus.ELIGIBLE,
-    offeredAt: queueLead.offeredAt,
-    callBeforeAt: queueLead.callBeforeAt,
+    ...(queueLead.offeredAt ? { offeredAt: queueLead.offeredAt } : {}),
+    ...(queueLead.callBeforeAt ? { callBeforeAt: queueLead.callBeforeAt } : {}),
     now: now(),
   });
   if (!ingest.created) {
@@ -237,8 +237,8 @@ export async function ingestQueueLead(
     metadata: {
       source: LeadSource.QUEUE,
       isTest: queueLead.isTest,
-      callBeforeAt: queueLead.callBeforeAt.toISOString(),
-      offeredAt: queueLead.offeredAt.toISOString(),
+      callBeforeAt: queueLead.callBeforeAt ? queueLead.callBeforeAt.toISOString() : null,
+      offeredAt: queueLead.offeredAt ? queueLead.offeredAt.toISOString() : null,
     },
   });
   await recordLifecycle({
@@ -249,7 +249,7 @@ export async function ingestQueueLead(
   });
 
   logger.info(
-    { leadId, callBeforeAt: queueLead.callBeforeAt.toISOString() },
+    { leadId, callBeforeAt: queueLead.callBeforeAt ? queueLead.callBeforeAt.toISOString() : null },
     `caller queue: ${prepareBoundaryNote}`,
   );
   return {

@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ProcessingStatus } from '@prisma/client';
 import { parseEnv } from '../src/config/env.js';
-import type { QueueLead } from '../src/integrations/guidedBoost/callerQueue.schemas.js';
+import { parseQueueResponse, type QueueLead } from '../src/integrations/guidedBoost/callerQueue.schemas.js';
 import type { CallerQueueClient } from '../src/integrations/guidedBoost/callerQueue.client.js';
 
 /**
@@ -277,6 +277,38 @@ describe('runCallerQueuePoll', () => {
   it('one offered lead: fetches and ingests it (prepared)', async () => {
     const summary = await runCallerQueuePoll({ ...deps(), queueClient: fakeClient(queueLead()) });
     expect(summary).toMatchObject({ enabled: true, fetched: true, outcome: 'prepared' });
+  });
+
+  // REGRESSION: a lead parsed from Guided Boost's ACTUAL response shape
+  // ({ now, leads: [{ id, phone, call_before, … }] }) must flow through the worker
+  // to ingest + placeCall — not be discarded as an "empty" queue.
+  it('a lead from the real GB response shape reaches ingest and placeCall', async () => {
+    const lead = parseQueueResponse({
+      now: '2026-11-16T14:22:23Z',
+      leads: [
+        {
+          id: '89c17f41',
+          phone: '+447700900123',
+          name: 'Real Lead',
+          offered_at: '2026-11-16T14:21:54Z',
+          call_before: '2026-11-16T14:32:00Z',
+        },
+      ],
+    });
+    expect(lead?.leadId).toBe('89c17f41');
+
+    const summary = await runCallerQueuePoll({ ...deps(), queueClient: fakeClient(lead) });
+
+    expect(summary).toMatchObject({
+      enabled: true,
+      fetched: true,
+      outcome: 'prepared',
+      callOutcome: 'call_initiated',
+      leadId: '89c17f41',
+    });
+    expect(findByLeadId).toHaveBeenCalledWith('89c17f41'); // reached ingest
+    expect(ingestQueueLeadProcessing).toHaveBeenCalled();
+    expect(placeCall).toHaveBeenCalledTimes(1); // reached placeCall
   });
 
   it('repeated polling of the same item does not create a second candidate', async () => {

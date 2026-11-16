@@ -15,13 +15,17 @@ import type { FormAnswer } from '../../services/leadContext.service.js';
  *   - It is then converted to the internal `QueueLead` representation (camelCase,
  *     parsed types). Downstream code only ever sees `QueueLead`.
  *
- * Confirmed queue item fields (David): lead_id, phone, name, email, brand,
- * page_slug, answers, summary, time_zone, offered_at, call_before, is_test.
+ * CONFIRMED response shape (David, observed in production):
+ *   { "now": "<iso>", "leads": [ { "id": "<lead id>", ... } ] }
+ * `leads` is an ARRAY, and the lead item's identifier is `id` (NOT `lead_id`).
+ * The remaining item fields (phone, name, email, brand, page_slug, answers,
+ * summary, time_zone, offered_at, call_before, is_test) are OPTIONAL: a given
+ * offer may carry only a subset, so a missing one must never reject the whole
+ * response (that previously threw and stalled the poller). `lead_id` is still
+ * accepted as a fallback for the earlier written contract.
  *
- * The queue returns zero or one lead; the response wrapper shape is not fully
- * confirmed, so `parseQueueResponse` extracts the item defensively (bare array or
- * a common `{leads|queue|data|items|results}` / `{lead}` wrapper) without
- * inventing any item field.
+ * The queue returns zero or one lead; `parseQueueResponse` extracts the item from
+ * the `leads` array (or a bare array / `{lead}` wrapper) without inventing fields.
  */
 
 const PATH = '/api/caller/queue';
@@ -33,19 +37,18 @@ const isoTimestamp = z
   .refine((value) => !Number.isNaN(Date.parse(value)), 'must be a parseable ISO-8601 timestamp');
 
 /**
- * The external queue item, validated in its confirmed snake_case names.
- *
- * Required (we cannot act safely without them): `lead_id` (identity), `phone`
- * (destination), `offered_at` and `call_before` (the authoritative timing). The
- * rest are optional/nullable: a lead may legitimately lack a name, answers, etc.,
- * and the context builder already tolerates missing context. `answers` is kept as
- * raw unknown[] here and normalized by the existing shared normalizer on
- * conversion. Unknown extra keys are preserved by `.passthrough()`, not rejected.
+ * The external queue item. The ONLY required field is the lead identifier, which
+ * Guided Boost sends as `id` (with `lead_id` accepted as a fallback). Everything
+ * else is optional/nullable so a partial offer still parses and reaches the worker;
+ * absent context is tolerated downstream, and an absent phone is handled by the
+ * existing phone-verdict check (recorded not-attempted), never a thrown error.
+ * `.passthrough()` preserves unknown extra keys rather than rejecting them.
  */
 export const queueItemSchema = z
   .object({
-    lead_id: z.string().min(1),
-    phone: z.string().min(1),
+    id: z.string().min(1).optional(),
+    lead_id: z.string().min(1).optional(),
+    phone: z.string().min(1).nullish(),
     name: z.string().nullish(),
     email: z.string().nullish(),
     brand: z.string().nullish(),
@@ -53,11 +56,14 @@ export const queueItemSchema = z
     answers: z.array(z.unknown()).nullish(),
     summary: z.string().nullish(),
     time_zone: z.string().nullish(),
-    offered_at: isoTimestamp,
-    call_before: isoTimestamp,
+    offered_at: isoTimestamp.nullish(),
+    call_before: isoTimestamp.nullish(),
     is_test: z.boolean().nullish(),
   })
-  .passthrough();
+  .passthrough()
+  .refine((item) => typeof item.id === 'string' || typeof item.lead_id === 'string', {
+    message: 'a lead identifier (`id` or `lead_id`) is required',
+  });
 
 export type QueueItem = z.infer<typeof queueItemSchema>;
 
@@ -70,8 +76,8 @@ export type QueueItem = z.infer<typeof queueItemSchema>;
  */
 export interface QueueLead {
   leadId: string;
-  /** Raw phone as offered; validated/normalized by the existing phone verdict logic. */
-  phone: string;
+  /** Raw phone as offered, when present; validated by the existing phone verdict logic. */
+  phone?: string;
   name?: string;
   email?: string;
   brand?: string;
@@ -80,19 +86,28 @@ export interface QueueLead {
   answers: FormAnswer[];
   summary?: string;
   timeZone?: string;
-  /** Absolute instant the lead was offered. */
-  offeredAt: Date;
-  /** Absolute authoritative deadline (`call_before`). Never local-time derived. */
-  callBeforeAt: Date;
+  /** Absolute instant the lead was offered, when present. */
+  offeredAt?: Date;
+  /** Absolute authoritative deadline (`call_before`), when present. Never local-time derived. */
+  callBeforeAt?: Date;
   /** Guided Boost test flag; flows through without special-casing. */
   isTest: boolean;
 }
 
-/** Converts a validated external item to the internal representation. */
+/**
+ * Converts a validated external item to the internal representation. The identifier
+ * is taken from `id` (Guided Boost's actual field), falling back to `lead_id`; the
+ * refine on `queueItemSchema` guarantees one is present.
+ */
 export function toQueueLead(item: QueueItem): QueueLead {
+  const leadId = item.id ?? item.lead_id;
+  if (!leadId) {
+    // Unreachable given the schema refine; kept so the type is a plain string.
+    throw new LeadApiError('contract', 'Caller queue item has no id', { path: PATH });
+  }
   return {
-    leadId: item.lead_id,
-    phone: item.phone,
+    leadId,
+    ...(item.phone ? { phone: item.phone } : {}),
     ...(item.name ? { name: item.name } : {}),
     ...(item.email ? { email: item.email } : {}),
     ...(item.brand ? { brand: item.brand } : {}),
@@ -100,8 +115,8 @@ export function toQueueLead(item: QueueItem): QueueLead {
     answers: normalizeAnswers(item.answers ?? []),
     ...(item.summary ? { summary: item.summary } : {}),
     ...(item.time_zone ? { timeZone: item.time_zone } : {}),
-    offeredAt: new Date(item.offered_at),
-    callBeforeAt: new Date(item.call_before),
+    ...(item.offered_at ? { offeredAt: new Date(item.offered_at) } : {}),
+    ...(item.call_before ? { callBeforeAt: new Date(item.call_before) } : {}),
     isTest: item.is_test === true,
   };
 }
@@ -122,15 +137,21 @@ function extractItems(payload: unknown): unknown[] {
       const single = obj['lead'];
       return single === null || single === undefined ? [] : [single];
     }
-    if (typeof obj['lead_id'] === 'string') return [obj];
+    if (typeof obj['id'] === 'string' || typeof obj['lead_id'] === 'string') return [obj];
   }
   return [];
 }
 
 /**
  * Validates a queue response and returns the single offered `QueueLead`, or null
- * when the queue is empty. Throws a `LeadApiError('contract', …)` for a present
- * but malformed item — never silently drops a bad required field.
+ * when the queue is empty.
+ *
+ * A present-but-malformed item is logged (with the Zod issue locations) and treated
+ * as an empty queue — it returns null rather than THROWING. The throw was what
+ * turned a single field-shape surprise into a stalled poller (the worker caught it,
+ * marked the cycle failed, and backed off), silently dropping real leads. Returning
+ * null keeps the poller running at its normal cadence while making the mismatch
+ * loudly visible in logs.
  */
 export function parseQueueResponse(payload: unknown): QueueLead | null {
   const items = extractItems(payload);
@@ -144,10 +165,14 @@ export function parseQueueResponse(payload: unknown): QueueLead | null {
 
   const parsed = queueItemSchema.safeParse(items[0]);
   if (!parsed.success) {
-    throw new LeadApiError('contract', 'Caller queue item did not match the expected shape', {
-      path: PATH,
-      issues: parsed.error.issues.map((issue) => `${issue.path.join('.')}: ${issue.code}`),
-    });
+    logger.error(
+      {
+        path: PATH,
+        issues: parsed.error.issues.map((issue) => `${issue.path.join('.')}: ${issue.code}`),
+      },
+      'caller queue: offered item did not match the expected shape; skipping this cycle',
+    );
+    return null;
   }
 
   return toQueueLead(parsed.data);

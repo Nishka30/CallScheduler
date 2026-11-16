@@ -73,8 +73,9 @@ export async function ensureProcessingRecord(
 export async function ingestQueueLeadProcessing(input: {
   leadId: string;
   status: typeof ProcessingStatus.ELIGIBLE | typeof ProcessingStatus.SKIPPED;
-  offeredAt: Date;
-  callBeforeAt: Date;
+  /** Absolute instants when Guided Boost supplied them; null/absent otherwise. */
+  offeredAt?: Date;
+  callBeforeAt?: Date;
   decisionReason?: string;
   decisionDetail?: string;
   now?: Date;
@@ -86,8 +87,8 @@ export async function ingestQueueLeadProcessing(input: {
         leadId: input.leadId,
         source: LeadSource.QUEUE,
         status: input.status,
-        offeredAt: input.offeredAt,
-        callBeforeAt: input.callBeforeAt,
+        ...(input.offeredAt === undefined ? {} : { offeredAt: input.offeredAt }),
+        ...(input.callBeforeAt === undefined ? {} : { callBeforeAt: input.callBeforeAt }),
         decidedAt,
         ...(input.decisionReason === undefined ? {} : { decisionReason: input.decisionReason }),
         ...(input.decisionDetail === undefined ? {} : { decisionDetail: input.decisionDetail }),
