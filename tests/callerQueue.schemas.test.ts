@@ -154,3 +154,38 @@ describe('caller queue — REGRESSION: real Guided Boost response shape', () => 
     ).toBeNull();
   });
 });
+
+// Regression: Guided Boost sends `summary` as a structured lead-context OBJECT
+// when a context has been computed (null otherwise) — never a bare string. The
+// previous `z.string().nullish()` rejected the object with
+// `summary: invalid_type`, so a real offered lead (7dba9f7c-...) failed
+// validation every cycle and was skipped. `summary` is carried, not consumed.
+describe('caller queue — REGRESSION: structured `summary` object', () => {
+  const CONTEXT_SUMMARY = {
+    summary: 'some context',
+    tone: 'positive',
+    facts: [],
+    booked_customer: false,
+    source: 'test',
+    computed_at: '2026-11-16T00:00:00.000Z',
+  };
+
+  it('accepts summary as a structured object and carries it through', () => {
+    const lead = parseQueueResponse([{ ...VALID_ITEM, summary: CONTEXT_SUMMARY }]);
+    expect(lead).not.toBeNull();
+    expect(lead?.leadId).toBe('lead-1');
+    expect(lead?.summary).toEqual(CONTEXT_SUMMARY);
+  });
+
+  it('still accepts summary: null (no computed context)', () => {
+    const lead = parseQueueResponse([{ ...VALID_ITEM, summary: null }]);
+    expect(lead).not.toBeNull();
+    expect(lead?.leadId).toBe('lead-1');
+    expect(lead?.summary).toBeUndefined();
+  });
+
+  it('still accepts a bare-string summary (older/alternate payloads)', () => {
+    const lead = parseQueueResponse([{ ...VALID_ITEM, summary: 'plain text' }]);
+    expect(lead?.summary).toBe('plain text');
+  });
+});

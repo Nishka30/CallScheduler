@@ -54,7 +54,11 @@ export const queueItemSchema = z
     brand: z.string().nullish(),
     page_slug: z.string().nullish(),
     answers: z.array(z.unknown()).nullish(),
-    summary: z.string().nullish(),
+    // Guided Boost sends `summary` as a structured lead-context object
+    // ({ summary, tone, facts, booked_customer, source, computed_at }) when a
+    // context has been computed, or `null` when it has not — never a bare string.
+    // It is carried but not consumed downstream, so accept any shape (incl. null).
+    summary: z.unknown().nullish(),
     time_zone: z.string().nullish(),
     offered_at: isoTimestamp.nullish(),
     call_before: isoTimestamp.nullish(),
@@ -84,7 +88,12 @@ export interface QueueLead {
   pageSlug?: string;
   /** Normalized via the shared `normalizeAnswers`; malformed entries dropped. */
   answers: FormAnswer[];
-  summary?: string;
+  /**
+   * Carried verbatim from the payload (Guided Boost sends a structured context
+   * object, or null). Not consumed downstream; typed `unknown` so no caller
+   * assumes a string.
+   */
+  summary?: unknown;
   timeZone?: string;
   /** Absolute instant the lead was offered, when present. */
   offeredAt?: Date;
