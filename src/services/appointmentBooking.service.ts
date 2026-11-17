@@ -4,6 +4,7 @@ import { CalendarClient } from '../integrations/leadApi/calendar.client.js';
 import { LeadApiClient } from '../integrations/leadApi/client.js';
 import { MEETING_TYPES, type MeetingType } from '../integrations/leadApi/calendar.schemas.js';
 import { recordAppointment } from '../repositories/appointmentRecord.repository.js';
+import { recordLifecycle, LifecycleEvent, LifecycleStatus } from './leadLifecycle.service.js';
 import type { OfferedSlot } from './teamScheduling.service.js';
 
 /**
@@ -158,6 +159,17 @@ export async function bookAppointment(
       { leadId: request.leadId, appointmentId, mode: res.decision?.mode },
       'team appointment booked (assignment, note, emails, forward-cancel handled server-side)',
     );
+    // Lifecycle: record the booking so the trace shows BOOKED after COMPLETED.
+    await recordLifecycle({
+      leadId: request.leadId,
+      event: LifecycleEvent.BOOKED,
+      status: LifecycleStatus.BOOKED,
+      detail: 'Consultation booked',
+      metadata: {
+        appointmentId,
+        ...(res.decision?.mode ? { mode: res.decision.mode } : {}),
+      },
+    });
     return {
       outcome: 'booked',
       appointmentId,

@@ -126,6 +126,28 @@ export async function findActiveCallAttempt(leadId: string): Promise<CallRecord 
 }
 
 /**
+ * Returns the latest call record for each of the given lead ids (one per lead).
+ * Read-only; used by the lead-lifecycle LIST endpoint to show call state without
+ * an N+1 query. Leads with no call record are simply absent from the result.
+ */
+export async function listLatestCallRecordsForLeads(leadIds: string[]): Promise<CallRecord[]> {
+  if (leadIds.length === 0) return [];
+  const rows = await prisma.callRecord.findMany({
+    where: { leadId: { in: leadIds } },
+    orderBy: { createdAt: 'desc' },
+  });
+  const seen = new Set<string>();
+  const latest: CallRecord[] = [];
+  for (const r of rows) {
+    if (!seen.has(r.leadId)) {
+      seen.add(r.leadId);
+      latest.push(r);
+    }
+  }
+  return latest;
+}
+
+/**
  * Looks up the call attempt a provider call id belongs to.
  *
  * This is the secure binding between a live Retell call and its lead: we stamped

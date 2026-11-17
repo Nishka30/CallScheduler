@@ -19,6 +19,7 @@ import {
 } from '../repositories/leadProcessing.repository.js';
 import { getLatestCallRecordByLead } from '../repositories/callRecord.repository.js';
 import { findLatestAppointmentForLead } from '../repositories/appointmentRecord.repository.js';
+import { recordLifecycle, LifecycleEvent, LifecycleStatus } from './leadLifecycle.service.js';
 
 /**
  * Guided Boost final-status reporting for QUEUE leads (Steps 6, 9).
@@ -236,6 +237,14 @@ export async function deliverQueueFinalStatus(
       { leadId, status: lastFinalStatus, outcome: result.outcome },
       'caller status: final status delivered to Guided Boost',
     );
+    // Lifecycle: the final status reached Guided Boost (finalization reporting).
+    await recordLifecycle({
+      leadId,
+      event: LifecycleEvent.STATUS_REPORTED,
+      status: LifecycleStatus.REPORTED,
+      detail: `Final status '${lastFinalStatus}' delivered to Guided Boost`,
+      metadata: { finalStatus: lastFinalStatus, outcome: result.outcome },
+    });
   } else {
     const nextAttemptAt = new Date(now().getTime() + config.CALLER_STATUS_RETRY_BACKOFF_MS);
     await safeMarkFailed(leadId, lastFinalStatus, result.errorKind ?? 'failed', nextAttemptAt);

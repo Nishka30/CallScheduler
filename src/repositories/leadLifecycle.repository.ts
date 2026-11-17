@@ -81,3 +81,44 @@ export async function listLifecycleEventsByLead(
     take: MAX_EVENTS_RETURNED,
   });
 }
+
+/** One row of the lead-list base query (processing summary, newest first). */
+export interface RecentLeadRow {
+  leadId: string;
+  status: string;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+/**
+ * Returns the most-recently-updated leads CallScheduler knows about, newest
+ * first, for the lifecycle LIST view. Based on `lead_processing` (every received
+ * queue/poll lead gets a row). Read-only.
+ */
+export async function listRecentLeadIds(limit: number): Promise<RecentLeadRow[]> {
+  const rows = await prisma.leadProcessing.findMany({
+    orderBy: [{ updatedAt: 'desc' }],
+    take: limit,
+    select: { leadId: true, status: true, createdAt: true, updatedAt: true },
+  });
+  return rows.map((r) => ({
+    leadId: r.leadId,
+    status: String(r.status),
+    createdAt: r.createdAt,
+    updatedAt: r.updatedAt,
+  }));
+}
+
+/**
+ * Returns all lifecycle events for the given lead ids, chronological (oldest
+ * first) with a stable tiebreaker, so the caller can group by lead and derive
+ * each lead's state from its complete history. Read-only.
+ */
+export async function listEventsForLeads(leadIds: string[]): Promise<LeadLifecycleEvent[]> {
+  if (leadIds.length === 0) return [];
+  return prisma.leadLifecycleEvent.findMany({
+    where: { leadId: { in: leadIds } },
+    orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+    take: MAX_EVENTS_RETURNED * 10,
+  });
+}

@@ -20,6 +20,14 @@ vi.mock('../src/repositories/leadProcessing.repository.js', () => ({
 const getLatestCallRecordByLead = vi.fn();
 vi.mock('../src/repositories/callRecord.repository.js', () => ({
   getLatestCallRecordByLead: (...a: unknown[]) => getLatestCallRecordByLead(...a),
+  listLatestCallRecordsForLeads: vi.fn(() => Promise.resolve([])),
+}));
+
+// Default: no appointment (not booked). Individual tests can override.
+const findLatestAppointmentForLead = vi.fn(() => Promise.resolve(null));
+vi.mock('../src/repositories/appointmentRecord.repository.js', () => ({
+  findLatestAppointmentForLead: (...a: unknown[]) => findLatestAppointmentForLead(...a),
+  listBookedLeadIds: vi.fn(() => Promise.resolve(new Set())),
 }));
 
 const {

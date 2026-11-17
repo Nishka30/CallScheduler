@@ -54,3 +54,18 @@ export async function findLatestAppointmentForLead(
     orderBy: { createdAt: 'desc' },
   });
 }
+
+/**
+ * Returns the set of lead ids (from the given list) that have at least one
+ * appointment record. Read-only; used by the lifecycle LIST endpoint to mark a
+ * lead BOOKED even when the CallRecord outcome was never set to APPOINTMENT_BOOKED
+ * (booking is tracked by AppointmentRecord, not inferred from the transcript).
+ */
+export async function listBookedLeadIds(leadIds: string[]): Promise<Set<string>> {
+  if (leadIds.length === 0) return new Set();
+  const rows = await prisma.appointmentRecord.findMany({
+    where: { leadId: { in: leadIds } },
+    select: { leadId: true },
+  });
+  return new Set(rows.map((r) => r.leadId));
+}

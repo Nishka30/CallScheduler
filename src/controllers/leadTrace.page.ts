@@ -116,6 +116,18 @@ export const LEAD_TRACE_HTML = `<!doctype html>
     <p class="muted" style="margin:10px 0 0">Search is by Lead ID. This service stores no email or phone, so those are not searchable here.</p>
   </div>
 
+  <div class="card">
+    <div class="toolbar">
+      <strong style="font-size:14px">Recent leads</strong>
+      <div class="autorow">
+        <label class="muted" style="margin:0">Limit
+          <input id="listLimit" type="text" value="50" style="width:56px;display:inline-block;padding:4px 8px" /></label>
+        <button class="secondary" id="loadListBtn">Load recent leads</button>
+      </div>
+    </div>
+    <div id="listWrap"><p class="muted" style="margin:6px 0 0">Load the most recent leads to see each one's lifecycle state at a glance. Click a row to open its full timeline.</p></div>
+  </div>
+
   <div id="result" class="hidden">
     <div class="toolbar">
       <div class="filters" id="filters">
@@ -152,7 +164,8 @@ export const LEAD_TRACE_HTML = `<!doctype html>
   var keyEl = $("key"), idEl = $("leadId"), searchBtn = $("searchBtn"),
       refreshBtn = $("refreshBtn"), autoEl = $("auto"), resultEl = $("result"),
       summaryEl = $("summary"), timelineEl = $("timeline"), bannerEl = $("banner"),
-      statusMsg = $("statusMsg"), lastUpdatedEl = $("lastUpdated");
+      statusMsg = $("statusMsg"), lastUpdatedEl = $("lastUpdated"),
+      loadListBtn = $("loadListBtn"), listWrap = $("listWrap"), listLimit = $("listLimit");
   var state = { leadId: null, data: null, filter: "all", timer: null };
 
   try { var saved = localStorage.getItem(KEY_STORE); if (saved) keyEl.value = saved; } catch (e) {}
@@ -175,6 +188,7 @@ export const LEAD_TRACE_HTML = `<!doctype html>
   function categoryOf(ev) {
     var e = ev.event || "", s = (ev.status || "").toLowerCase();
     if (e === "call_failed") return "rejected";
+    if (e === "booked" || e === "status_reported" || e === "crm_note_delivered") return "success";
     if (s === "rejected" || s === "expired" || s === "failed") return "rejected";
     if (e === "lead_decision" && s === "skipped") return "skipped";
     if (e === "call_completed") {
@@ -192,7 +206,9 @@ export const LEAD_TRACE_HTML = `<!doctype html>
     lead_received: "Lead Received", eligibility_checked: "Eligibility Checked",
     phone_checked: "Phone Checked", crm_gate_checked: "CRM Gate", hold_checked: "Hold Checked",
     lead_decision: "Lead Decision", call_attempt: "Call Attempt", retell_initiated: "Retell Call Initiated",
-    call_failed: "Call Failed", call_completed: "Call Completed"
+    call_failed: "Call Failed", call_completed: "Call Completed",
+    booked: "Booked", status_reported: "Status Reported", crm_note_delivered: "CRM Note Delivered",
+    lead_unavailable: "Lead Unavailable", already_decided: "Already Decided", calling_disabled: "Calling Disabled"
   };
   function titleFor(e) { return TITLES[e] || e; }
   // For the top filter: which bucket an event belongs to.
@@ -227,6 +243,16 @@ export const LEAD_TRACE_HTML = `<!doctype html>
       : lead.status === "FAILED" ? "b-err"
       : lead.status === "NEEDS_REVIEW" ? "b-warn" : "b-neutral";
     cell("Status", badge(lead.status || "UNKNOWN", statusCls));
+    if (lead.currentStateLabel) {
+      var stCls = lead.currentState === "BOOKED" ? "b-ok"
+        : (lead.currentState === "CALL_FAILED" || lead.currentState === "PHONE_INVALID") ? "b-err"
+        : (lead.currentState === "SKIPPED" || lead.currentState === "RECEIVED_NOT_PROCESSED") ? "b-skip"
+        : (lead.currentState === "COMPLETED_NO_BOOKING" || lead.currentState === "STATUS_REPORTED" || lead.currentState === "CRM_NOTE_DELIVERED") ? "b-ok"
+        : "b-neutral";
+      cell("Lifecycle State", badge(lead.currentStateLabel, stCls));
+    }
+    if (lead.bookingStatus) cell("Booking", badge(lead.bookingStatus === "BOOKED" ? "Booked" : "No booking", lead.bookingStatus === "BOOKED" ? "b-ok" : "b-skip"));
+    if (lead.stoppedReason) cell("Stopped Reason", lead.stoppedReason);
     if (lead.decisionReason) cell("Reason", lead.decisionReason);
     if (lead.crmRoute) cell("CRM Route", lead.crmRoute);
     if (lead.callerHoldUntil) {
@@ -240,45 +266,61 @@ export const LEAD_TRACE_HTML = `<!doctype html>
     summaryEl.appendChild(grid);
   }
 
+  // Deterministic banner driven by the backend-derived current state (source of
+  // truth), not by guessing from the last raw event. Never says "missed".
   function renderBanner(lead, events) {
     bannerEl.innerHTML = "";
-    if (!events.length) return;
-    var last = events[events.length - 1];
-    var cat = categoryOf(last);
-    var b;
-    if (cat === "rejected" || cat === "skipped") {
-      b = el("div", "banner err");
-      b.textContent = "Stopped at " + titleFor(last.event) + (last.reason ? " \\u2014 " + last.reason : "");
-    } else if (last.event === "call_completed") {
-      b = el("div", "banner ok");
-      b.textContent = "Completed \\u2014 " + (last.reason || last.status || "done");
-    } else {
-      b = el("div", "banner warn");
-      b.textContent = "In progress \\u2014 last event: " + titleFor(last.event);
+    var state = lead ? lead.currentState : null;
+    var label = lead ? lead.currentStateLabel : null;
+    var reason = lead ? lead.stoppedReason : null;
+    var cls = "warn";
+    if (state === "BOOKED" || state === "COMPLETED_NO_BOOKING" || state === "STATUS_REPORTED" || state === "CRM_NOTE_DELIVERED") cls = "ok";
+    else if (state === "CALL_FAILED" || state === "PHONE_INVALID" || state === "SKIPPED" || state === "RECEIVED_NOT_PROCESSED" || state === "NOT_RECEIVED") cls = "err";
+    if (!label) {
+      if (!events.length) return;
+      var last = events[events.length - 1];
+      label = "Last event: " + titleFor(last.event);
     }
+    var b = el("div", "banner " + cls);
+    b.textContent = label + (reason ? " \\u2014 " + reason : "");
     bannerEl.appendChild(b);
   }
 
   function renderTimeline(events) {
     timelineEl.innerHTML = "";
-    var shown = events.filter(filterBucket);
-    if (!shown.length) {
+    var filtered = events.filter(filterBucket);
+    if (!filtered.length) {
       timelineEl.appendChild(el("li", "muted", "No events match this filter."));
       return;
     }
-    // Index of the last stop event (for emphasis).
+    // Presentation-only dedupe: collapse CONSECUTIVE identical events (same
+    // event+status+reason) into one row with a count. The underlying
+    // lead_lifecycle_events rows are never destroyed; this only affects display,
+    // so e.g. two back-to-back Call Completed rows show as "Call Completed (x2)".
+    var shown = [];
+    filtered.forEach(function (ev) {
+      var prev = shown.length ? shown[shown.length - 1] : null;
+      if (prev && prev.event === ev.event && (prev.status || "") === (ev.status || "") && (prev.reason || "") === (ev.reason || "")) {
+        prev._count = (prev._count || 1) + 1;
+        prev._lastAt = ev.createdAt;
+        return;
+      }
+      var copy = {}; for (var k in ev) { if (Object.prototype.hasOwnProperty.call(ev, k)) copy[k] = ev[k]; }
+      copy._count = 1;
+      shown.push(copy);
+    });
+    // Index of the last stop event within the displayed list (for emphasis).
     var lastStop = -1;
-    for (var i = 0; i < events.length; i++) {
-      var c = categoryOf(events[i]);
+    for (var i = 0; i < shown.length; i++) {
+      var c = categoryOf(shown[i]);
       if (c === "rejected" || c === "skipped") lastStop = i;
     }
-    shown.forEach(function (ev) {
+    shown.forEach(function (ev, idx) {
       var cat = categoryOf(ev);
-      var origIdx = events.indexOf(ev);
-      var li = el("li", "ev" + (origIdx === lastStop ? " stop" : ""));
+      var li = el("li", "ev" + (idx === lastStop ? " stop" : ""));
       li.appendChild(el("span", "dot " + (CAT_DOT[cat] || "neutral")));
       var head = el("div", "ev-head");
-      head.appendChild(el("span", "ev-title", titleFor(ev.event)));
+      head.appendChild(el("span", "ev-title", titleFor(ev.event) + (ev._count > 1 ? " (x" + ev._count + ")" : "")));
       if (ev.status) {
         var bcls = cat === "success" ? "b-ok" : cat === "rejected" ? "b-err" : cat === "skipped" ? "b-skip" : cat === "warn" ? "b-warn" : "b-neutral";
         head.appendChild(badge(ev.status, bcls));
@@ -361,6 +403,59 @@ export const LEAD_TRACE_HTML = `<!doctype html>
     });
   }
 
+  // ---- lead list --------------------------------------------------------
+  function stateCls(state) {
+    if (state === "BOOKED" || state === "COMPLETED_NO_BOOKING" || state === "STATUS_REPORTED" || state === "CRM_NOTE_DELIVERED") return "b-ok";
+    if (state === "CALL_FAILED" || state === "PHONE_INVALID") return "b-err";
+    if (state === "SKIPPED" || state === "RECEIVED_NOT_PROCESSED" || state === "NOT_RECEIVED") return "b-skip";
+    return "b-neutral";
+  }
+  function renderList(leads) {
+    listWrap.innerHTML = "";
+    if (!leads || !leads.length) { listWrap.appendChild(el("p", "muted", "No leads found.")); return; }
+    var tbl = el("table"); tbl.style.width = "100%"; tbl.style.borderCollapse = "collapse"; tbl.style.fontSize = "13px";
+    var thead = el("thead"), htr = el("tr");
+    ["Lead", "Lifecycle state", "Call", "Booking", "Last event", "Updated"].forEach(function (h) {
+      var th = el("th", null, h);
+      th.style.textAlign = "left"; th.style.padding = "6px 8px"; th.style.color = "var(--muted)"; th.style.borderBottom = "1px solid var(--border)";
+      htr.appendChild(th);
+    });
+    thead.appendChild(htr); tbl.appendChild(thead);
+    var tb = el("tbody");
+    leads.forEach(function (ld) {
+      var tr = el("tr"); tr.style.cursor = "pointer";
+      tr.addEventListener("click", function () { idEl.value = ld.leadId; doSearch(); try { window.scrollTo(0, 0); } catch (e) {} });
+      function td(node) {
+        var c = el("td"); c.style.padding = "6px 8px"; c.style.borderBottom = "1px solid var(--border)";
+        if (typeof node === "string") c.textContent = node; else if (node) c.appendChild(node);
+        return c;
+      }
+      var idShort = el("span"); idShort.style.fontFamily = "var(--mono)"; idShort.textContent = ld.leadId.slice(0, 8) + "\\u2026"; idShort.title = ld.leadId;
+      tr.appendChild(td(idShort));
+      tr.appendChild(td(badge(ld.currentStateLabel || ld.currentState || "\\u2014", stateCls(ld.currentState))));
+      tr.appendChild(td(ld.callStatus || "\\u2014"));
+      tr.appendChild(td(ld.bookingStatus === "BOOKED" ? badge("Booked", "b-ok") : (ld.bookingStatus === "NO_BOOKING" ? badge("No booking", "b-skip") : "\\u2014")));
+      tr.appendChild(td(ld.lastEvent ? titleFor(ld.lastEvent) : "\\u2014"));
+      tr.appendChild(td(fmtTime(ld.updatedAt || ld.lastEventAt)));
+      tb.appendChild(tr);
+    });
+    tbl.appendChild(tb); listWrap.appendChild(tbl);
+  }
+  function fetchList() {
+    var key = keyEl.value.trim();
+    if (!key) { listWrap.innerHTML = ""; listWrap.appendChild(el("p", "status-msg error", "Paste the bearer API key above first.")); return; }
+    var lim = parseInt(listLimit.value, 10); if (!(lim > 0)) lim = 50;
+    listWrap.innerHTML = ""; listWrap.appendChild(el("p", "muted", "Loading recent leads\\u2026"));
+    fetch("/api/leads/lifecycles?limit=" + encodeURIComponent(lim), { headers: { "Authorization": "Bearer " + key } })
+      .then(function (res) {
+        if (res.status === 401) { listWrap.innerHTML = ""; listWrap.appendChild(el("p", "status-msg error", "The API key was rejected.")); return null; }
+        if (!res.ok) { listWrap.innerHTML = ""; listWrap.appendChild(el("p", "status-msg error", "Unable to load leads.")); return null; }
+        return res.json();
+      })
+      .then(function (data) { if (data) renderList(data.leads || []); })
+      .catch(function () { listWrap.innerHTML = ""; listWrap.appendChild(el("p", "status-msg error", "Unable to load leads.")); });
+  }
+
   function doSearch() { stopAuto(); fetchLifecycle(idEl.value.trim(), false); syncAuto(); }
 
   function stopAuto() { if (state.timer) { clearInterval(state.timer); state.timer = null; } }
@@ -376,6 +471,7 @@ export const LEAD_TRACE_HTML = `<!doctype html>
 
   // ---- events -----------------------------------------------------------
   searchBtn.addEventListener("click", doSearch);
+  loadListBtn.addEventListener("click", fetchList);
   idEl.addEventListener("keydown", function (e) { if (e.key === "Enter") doSearch(); });
   refreshBtn.addEventListener("click", function () { if (state.leadId) fetchLifecycle(state.leadId, false); });
   autoEl.addEventListener("change", syncAuto);

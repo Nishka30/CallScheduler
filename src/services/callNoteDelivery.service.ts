@@ -12,6 +12,7 @@ import {
   type CallNoteAppointment,
   type CallNoteRecord,
 } from './callNote.service.js';
+import { recordLifecycle, LifecycleEvent, LifecycleStatus } from './leadLifecycle.service.js';
 
 /**
  * Delivers the CRM note for a completed call and records the delivery status on
@@ -74,6 +75,14 @@ export async function deliverCallNote(
 
   await markDelivered(record.id);
   logger.info({ callRecordId: record.id, leadId: record.leadId }, 'CRM call-note delivered');
+  // Lifecycle: the CRM call note was confirmed delivered.
+  await recordLifecycle({
+    leadId: record.leadId,
+    event: LifecycleEvent.CRM_NOTE_DELIVERED,
+    status: LifecycleStatus.DELIVERED,
+    detail: 'CRM call note delivered',
+    metadata: { callRecordId: record.id },
+  });
   return 'sent';
 }
 

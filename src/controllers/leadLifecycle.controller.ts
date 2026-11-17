@@ -1,6 +1,6 @@
 import type { Request, Response } from 'express';
 import { z } from 'zod';
-import { getLeadLifecycleTrace } from '../services/leadLifecycle.service.js';
+import { getLeadLifecycleTrace, listLeadLifecycles } from '../services/leadLifecycle.service.js';
 
 /**
  * Read-only lead-lifecycle API (authenticated upstream by `requireCallReadAuth`).
@@ -27,4 +27,21 @@ export async function getLeadLifecycle(req: Request, res: Response): Promise<voi
   }
 
   res.status(200).json(trace);
+}
+
+const limitSchema = z.coerce.number().int().min(1).max(200).default(50);
+
+/**
+ * `GET /api/leads/lifecycles?limit=` — the lead-list summary view. Returns the
+ * most-recent leads with their deterministic lifecycle state, call and booking
+ * status, and last event. No transcript is loaded.
+ */
+export async function getLeadLifecycleList(req: Request, res: Response): Promise<void> {
+  const parsed = limitSchema.safeParse(req.query['limit'] ?? undefined);
+  if (!parsed.success) {
+    res.status(400).json({ error: 'invalid limit' });
+    return;
+  }
+  const leads = await listLeadLifecycles(parsed.data);
+  res.status(200).json({ leads, count: leads.length });
 }
