@@ -1,0 +1,5558 @@
+{
+  "call_id": "call_19d4420bf4b5d66c166c079d3d1",
+  "call_type": "phone_call",
+  "agent_id": "agent_e3152e8046a938387ba7a52cc1",
+  "agent_version": 0,
+  "agent_name": "Travel Call Agent",
+  "retell_llm_dynamic_variables": {
+    "brand_name": "himalayanwonders.com",
+    "customer_local_time": "12:02 PM",
+    "customer_name": "nishka",
+    "customer_timezone": "Asia/Calcutta",
+    "customer_timezone_label": "India Standard Time",
+    "customer_timezone_source": "browser",
+    "enquired_destination": "Nepal",
+    "group_size": "Individual",
+    "preferred_trek": "Everest region",
+    "travel_experience": "A few short hikes",
+    "travel_timing": "2027",
+    "trip_duration": "16+ days"
+  },
+  "contact_dynamic_variables": {},
+  "collected_dynamic_variables": {
+    "current_node": "End Call",
+    "previous_node": "Booking Confirmed"
+  },
+  "custom_sip_headers": {},
+  "call_status": "ended",
+  "start_timestamp": 1794897166219,
+  "end_timestamp": 1794897383922,
+  "duration_ms": 217703,
+  "transcript": "Agent: Hi nishka, this is a travel consultant calling from himalayanwonders.com. I'm calling about your enquiry for Nepal. Is now a good time for a quick conversation about your travel plans?\nUser: Yes. It is. Yes. \nAgent: I see you’re considering the Everest region in 2027, with some \nUser: Yep. \nAgent: shorter hikes.\nUser: Correct. \nUser: Correct. \nAgent: Do you have an approximate budget range in mind for the trip?\nUser: Yeah. Like ten k. Dollars. \nAgent: Is there anything specific you’d really like to include in the trip?\nUser: Yeah. I like food if I want food experience. \nAgent: I’ll note that you’d like food experiences included. Would you like me to arrange a chat with a travel consultant to plan the \nUser: Yeah, please. \nUser: Please do that. \nAgent: Before I check times, I just need to confirm your local time. Is it about 10:33 PM where you are right now?\nAgent: Before I \nUser: No. \nAgent: check the available consultation times, I have you in India Standard Time, and it looks like it’s around 12:02 PM where you are. Is that correct?\nUser: Yes. Yes. \nUser: Yes. \nAgent: Which date would work best for your \nAgent: I have Friday, November 20th at 1:00, 1:15, or 1:30 PM Pacific \nUser: Friday doesn't work. For me. Do you have any slots on Monday? \nUser: Hello? \nAgent: Yes, I’m here. I’m sorry, there don’t seem to be any available consultation slots on Monday, November 23rd. Would another date work for you?\nUser: Yeah. Like, Tuesday? \nUser: Or \nUser: Wednesday or \nUser: any other day in that week? \nAgent: I’ll check availability \nAgent: I’m sorry, there don’t seem to be any available consultation slots on \nUser: Yeah. \nAgent: Tuesday, November 24th. Would another date work for you?\nUser: Yeah. \nAgent: Which other date would work best for you?\nUser: Yeah. Yeah. C Wednesday. Lubin two, Wednesday. \nAgent: I’m sorry, there don’t seem to be any available consultation slots on \nUser: Then when is the next available? When is the next available? You find the next available. Right? Whenever it is there, Don't ask me the day. \nAgent: The soonest available times are Friday, November 20th at 1:00, \nUser: Yeah. Then book it for one o'clock. \nAgent: For your Nepal consultation on Friday, November 20th at 1 PM Pacific Time, would you prefer phone, WhatsApp, or video?\nUser: Yeah. I prefer phone. \nAgent: Just to confirm, should I book your Nepal consultation for Friday, November 20th at 1 PM Pacific Time by phone?\nUser: Yeah. Do that. \nAgent: Okay, \nAgent: I’m booking that now.\nUser: Done. \nAgent: I’m just waiting for the confirmation.\nAgent: Your consultation is booked for Friday, November 20th at 1 PM Pacific Time by phone. David Urmann will be your consultant. Thanks for \nUser: Awesome. \nAgent: booking—have a great \n",
+  "transcript_object": [
+    {
+      "role": "agent",
+      "content": "Hi nishka, this is a travel consultant calling from himalayanwonders.com. I'm calling about your enquiry for Nepal. Is now a good time for a quick conversation about your travel plans?",
+      "words": [
+        {
+          "word": "Hi ",
+          "start": 0.211117919921875,
+          "end": 0.372
+        },
+        {
+          "word": "nishka, ",
+          "start": 0.452,
+          "end": 0.932
+        },
+        {
+          "word": "this ",
+          "start": 1.05510009765625,
+          "end": 1.252
+        },
+        {
+          "word": "is ",
+          "start": 1.332,
+          "end": 1.332
+        },
+        {
+          "word": "a ",
+          "start": 1.412,
+          "end": 1.412
+        },
+        {
+          "word": "travel ",
+          "start": 1.492,
+          "end": 1.732
+        },
+        {
+          "word": "consultant ",
+          "start": 1.732,
+          "end": 2.292
+        },
+        {
+          "word": "calling ",
+          "start": 2.372,
+          "end": 2.612
+        },
+        {
+          "word": "from ",
+          "start": 2.612,
+          "end": 2.852
+        },
+        {
+          "word": "himalayanwonders.com. ",
+          "start": 2.932000244140625,
+          "end": 4.452
+        },
+        {
+          "word": "I'm ",
+          "start": 4.744883056640625,
+          "end": 4.852
+        },
+        {
+          "word": "calling ",
+          "start": 4.932,
+          "end": 5.092
+        },
+        {
+          "word": "about ",
+          "start": 5.172,
+          "end": 5.332
+        },
+        {
+          "word": "your ",
+          "start": 5.332,
+          "end": 5.492
+        },
+        {
+          "word": "enquiry ",
+          "start": 5.492,
+          "end": 6.052
+        },
+        {
+          "word": "for ",
+          "start": 6.052,
+          "end": 6.212
+        },
+        {
+          "word": "Nepal. ",
+          "start": 6.292,
+          "end": 6.692
+        },
+        {
+          "word": "Is ",
+          "start": 7.003462890625,
+          "end": 7.092
+        },
+        {
+          "word": "now ",
+          "start": 7.172,
+          "end": 7.332
+        },
+        {
+          "word": "a ",
+          "start": 7.332,
+          "end": 7.412
+        },
+        {
+          "word": "good ",
+          "start": 7.492,
+          "end": 7.572
+        },
+        {
+          "word": "time ",
+          "start": 7.652,
+          "end": 7.892
+        },
+        {
+          "word": "for ",
+          "start": 7.972,
+          "end": 8.052
+        },
+        {
+          "word": "a ",
+          "start": 8.052,
+          "end": 8.132
+        },
+        {
+          "word": "quick ",
+          "start": 8.212,
+          "end": 8.292
+        },
+        {
+          "word": "conversation ",
+          "start": 8.292,
+          "end": 9.012
+        },
+        {
+          "word": "about ",
+          "start": 9.092,
+          "end": 9.172
+        },
+        {
+          "word": "your ",
+          "start": 9.172,
+          "end": 9.252
+        },
+        {
+          "word": "travel ",
+          "start": 9.252,
+          "end": 9.572
+        },
+        {
+          "word": "plans?",
+          "start": 9.652,
+          "end": 10.052
+        }
+      ],
+      "metadata": {
+        "response_id": 0
+      }
+    },
+    {
+      "role": "user",
+      "content": "Yes. It is. Yes. ",
+      "words": [
+        {
+          "word": "Yes. ",
+          "start": 10.538,
+          "end": 10.858001
+        },
+        {
+          "word": "It ",
+          "start": 10.858001,
+          "end": 11.018001
+        },
+        {
+          "word": "is. ",
+          "start": 11.018001,
+          "end": 11.258000000000001
+        },
+        {
+          "word": "Yes. ",
+          "start": 11.258000000000001,
+          "end": 11.418000000000001
+        }
+      ]
+    },
+    {
+      "role": "agent",
+      "content": "I see you’re considering the Everest region in 2027, with some ",
+      "words": [
+        {
+          "word": "I ",
+          "start": 12.559773193359375,
+          "end": 12.641
+        },
+        {
+          "word": "see ",
+          "start": 12.721,
+          "end": 12.881
+        },
+        {
+          "word": "you’re ",
+          "start": 12.961,
+          "end": 13.041
+        },
+        {
+          "word": "considering ",
+          "start": 13.041000244140625,
+          "end": 13.601
+        },
+        {
+          "word": "the ",
+          "start": 13.681,
+          "end": 13.761
+        },
+        {
+          "word": "Everest ",
+          "start": 13.761038818359374,
+          "end": 14.241
+        },
+        {
+          "word": "region ",
+          "start": 14.241,
+          "end": 14.721
+        },
+        {
+          "word": "in ",
+          "start": 14.801,
+          "end": 14.881
+        },
+        {
+          "word": "2027, ",
+          "start": 14.96100048828125,
+          "end": 16.001
+        },
+        {
+          "word": "with ",
+          "start": 16.162986083984375,
+          "end": 16.241
+        },
+        {
+          "word": "some ",
+          "start": 16.241,
+          "end": 16.401
+        }
+      ],
+      "metadata": {
+        "response_id": 2,
+        "interrupted": true
+      }
+    },
+    {
+      "role": "user",
+      "content": "Yep. ",
+      "words": [
+        {
+          "word": "Yep. ",
+          "start": 16.697999999999997,
+          "end": 17.177999999999997
+        }
+      ]
+    },
+    {
+      "role": "agent",
+      "content": "shorter hikes.",
+      "words": [
+        {
+          "word": "shorter ",
+          "start": 16.481,
+          "end": 16.801
+        },
+        {
+          "word": "hikes.",
+          "start": 16.801,
+          "end": 17.281
+        }
+      ],
+      "metadata": {
+        "response_id": 2,
+        "interrupted": true
+      }
+    },
+    {
+      "role": "user",
+      "content": "Correct. ",
+      "words": [
+        {
+          "word": "Correct. ",
+          "start": 17.177999999999997,
+          "end": 17.418
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "content": "Correct. ",
+      "words": [
+        {
+          "word": "Correct. ",
+          "start": 18.168,
+          "end": 18.487999
+        }
+      ]
+    },
+    {
+      "role": "agent",
+      "content": "Do you have an approximate budget range in mind for the trip?",
+      "words": [
+        {
+          "word": "Do ",
+          "start": 19.243834228515624,
+          "end": 19.335
+        },
+        {
+          "word": "you ",
+          "start": 19.415,
+          "end": 19.495
+        },
+        {
+          "word": "have ",
+          "start": 19.575,
+          "end": 19.735
+        },
+        {
+          "word": "an ",
+          "start": 19.815,
+          "end": 19.895
+        },
+        {
+          "word": "approximate ",
+          "start": 19.895,
+          "end": 20.535
+        },
+        {
+          "word": "budget ",
+          "start": 20.535,
+          "end": 20.855
+        },
+        {
+          "word": "range ",
+          "start": 20.935,
+          "end": 21.175
+        },
+        {
+          "word": "in ",
+          "start": 21.255,
+          "end": 21.255
+        },
+        {
+          "word": "mind ",
+          "start": 21.255,
+          "end": 21.575
+        },
+        {
+          "word": "for ",
+          "start": 21.655,
+          "end": 21.655
+        },
+        {
+          "word": "the ",
+          "start": 21.735,
+          "end": 21.735
+        },
+        {
+          "word": "trip?",
+          "start": 21.735,
+          "end": 22.135
+        }
+      ],
+      "metadata": {
+        "response_id": 4
+      }
+    },
+    {
+      "role": "user",
+      "content": "Yeah. Like ten k. Dollars. ",
+      "words": [
+        {
+          "word": "Yeah. ",
+          "start": 22.688,
+          "end": 23.328000999999997
+        },
+        {
+          "word": "Like ",
+          "start": 23.328000999999997,
+          "end": 23.648
+        },
+        {
+          "word": "ten ",
+          "start": 23.648,
+          "end": 24.368
+        },
+        {
+          "word": "k. ",
+          "start": 24.368,
+          "end": 24.688
+        },
+        {
+          "word": "Dollars. ",
+          "start": 24.927999999999997,
+          "end": 25.407999
+        }
+      ]
+    },
+    {
+      "role": "agent",
+      "content": "Is there anything specific you’d really like to include in the trip?",
+      "words": [
+        {
+          "word": "Is ",
+          "start": 26.408407470703125,
+          "end": 26.598
+        },
+        {
+          "word": "there ",
+          "start": 26.678,
+          "end": 26.838
+        },
+        {
+          "word": "anything ",
+          "start": 26.838,
+          "end": 27.238
+        },
+        {
+          "word": "specific ",
+          "start": 27.238,
+          "end": 28.038
+        },
+        {
+          "word": "you’d ",
+          "start": 28.118,
+          "end": 28.358
+        },
+        {
+          "word": "really ",
+          "start": 28.438,
+          "end": 28.678
+        },
+        {
+          "word": "like ",
+          "start": 28.678,
+          "end": 28.838
+        },
+        {
+          "word": "to ",
+          "start": 28.918,
+          "end": 28.998
+        },
+        {
+          "word": "include ",
+          "start": 29.078,
+          "end": 29.318
+        },
+        {
+          "word": "in ",
+          "start": 29.398,
+          "end": 29.398
+        },
+        {
+          "word": "the ",
+          "start": 29.398,
+          "end": 29.478
+        },
+        {
+          "word": "trip?",
+          "start": 29.558,
+          "end": 29.958
+        }
+      ],
+      "metadata": {
+        "response_id": 6
+      }
+    },
+    {
+      "role": "user",
+      "content": "Yeah. I like food if I want food experience. ",
+      "words": [
+        {
+          "word": "Yeah. ",
+          "start": 30.328000999999997,
+          "end": 30.808
+        },
+        {
+          "word": "I ",
+          "start": 30.808,
+          "end": 30.968
+        },
+        {
+          "word": "like ",
+          "start": 30.968,
+          "end": 31.208
+        },
+        {
+          "word": "food ",
+          "start": 31.208,
+          "end": 31.528
+        },
+        {
+          "word": "if ",
+          "start": 31.528,
+          "end": 31.768002
+        },
+        {
+          "word": "I ",
+          "start": 31.768002,
+          "end": 31.928001
+        },
+        {
+          "word": "want ",
+          "start": 31.928001,
+          "end": 32.168
+        },
+        {
+          "word": "food ",
+          "start": 32.168,
+          "end": 32.488
+        },
+        {
+          "word": "experience. ",
+          "start": 32.488,
+          "end": 32.888000000000005
+        }
+      ]
+    },
+    {
+      "role": "agent",
+      "content": "I’ll note that you’d like food experiences included. Would you like me to arrange a chat with a travel consultant to plan the ",
+      "words": [
+        {
+          "word": "I’ll ",
+          "start": 34.92992041015625,
+          "end": 35.09
+        },
+        {
+          "word": "note ",
+          "start": 35.17,
+          "end": 35.41
+        },
+        {
+          "word": "that ",
+          "start": 35.49,
+          "end": 35.49
+        },
+        {
+          "word": "you’d ",
+          "start": 35.57,
+          "end": 35.73
+        },
+        {
+          "word": "like ",
+          "start": 35.73,
+          "end": 35.97
+        },
+        {
+          "word": "food ",
+          "start": 36.05,
+          "end": 36.21
+        },
+        {
+          "word": "experiences ",
+          "start": 36.21,
+          "end": 36.93
+        },
+        {
+          "word": "included.",
+          "start": 36.93,
+          "end": 37.49
+        },
+        {
+          "word": " Would ",
+          "start": 37.74860131835938,
+          "end": 37.97
+        },
+        {
+          "word": "you ",
+          "start": 38.05,
+          "end": 38.05
+        },
+        {
+          "word": "like ",
+          "start": 38.13,
+          "end": 38.29
+        },
+        {
+          "word": "me ",
+          "start": 38.37,
+          "end": 38.37
+        },
+        {
+          "word": "to ",
+          "start": 38.37,
+          "end": 38.53
+        },
+        {
+          "word": "arrange ",
+          "start": 38.61,
+          "end": 38.85
+        },
+        {
+          "word": "a ",
+          "start": 38.93,
+          "end": 38.93
+        },
+        {
+          "word": "chat ",
+          "start": 38.93,
+          "end": 39.41
+        },
+        {
+          "word": "with ",
+          "start": 39.49,
+          "end": 39.49
+        },
+        {
+          "word": "a ",
+          "start": 39.57,
+          "end": 39.57
+        },
+        {
+          "word": "travel ",
+          "start": 39.65,
+          "end": 39.97
+        },
+        {
+          "word": "consultant ",
+          "start": 39.97,
+          "end": 40.45
+        },
+        {
+          "word": "to ",
+          "start": 40.53,
+          "end": 40.61
+        },
+        {
+          "word": "plan ",
+          "start": 40.61,
+          "end": 40.85
+        },
+        {
+          "word": "the ",
+          "start": 40.93,
+          "end": 40.93
+        }
+      ],
+      "metadata": {
+        "response_id": 7,
+        "interrupted": true
+      }
+    },
+    {
+      "role": "user",
+      "content": "Yeah, please. ",
+      "words": [
+        {
+          "word": "Yeah, ",
+          "start": 40.747997000000005,
+          "end": 41.227997
+        },
+        {
+          "word": "please. ",
+          "start": 41.227997,
+          "end": 41.387997
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "content": "Please do that. ",
+      "words": [
+        {
+          "word": "Please ",
+          "start": 42.008,
+          "end": 42.328
+        },
+        {
+          "word": "do ",
+          "start": 42.328,
+          "end": 42.568000000000005
+        },
+        {
+          "word": "that. ",
+          "start": 42.568000000000005,
+          "end": 42.728
+        }
+      ]
+    },
+    {
+      "role": "agent",
+      "content": "Before I check times, I just need to confirm your local time. Is it about 10:33 PM where you are right now?",
+      "words": [
+        {
+          "word": "Before ",
+          "start": 43.563689453125,
+          "end": 43.901
+        },
+        {
+          "word": "I ",
+          "start": 43.981,
+          "end": 43.981
+        },
+        {
+          "word": "check ",
+          "start": 44.061,
+          "end": 44.221
+        },
+        {
+          "word": "times, ",
+          "start": 44.221,
+          "end": 44.861
+        },
+        {
+          "word": "I ",
+          "start": 45.02315625,
+          "end": 45.101
+        },
+        {
+          "word": "just ",
+          "start": 45.181,
+          "end": 45.261
+        },
+        {
+          "word": "need ",
+          "start": 45.341,
+          "end": 45.501
+        },
+        {
+          "word": "to ",
+          "start": 45.581,
+          "end": 45.581
+        },
+        {
+          "word": "confirm ",
+          "start": 45.581,
+          "end": 45.981
+        },
+        {
+          "word": "your ",
+          "start": 46.061,
+          "end": 46.141
+        },
+        {
+          "word": "local ",
+          "start": 46.141,
+          "end": 46.381
+        },
+        {
+          "word": "time.",
+          "start": 46.461,
+          "end": 46.781
+        },
+        {
+          "word": " Is ",
+          "start": 47.07960668945312,
+          "end": 47.261
+        },
+        {
+          "word": "it ",
+          "start": 47.261,
+          "end": 47.341
+        },
+        {
+          "word": "about ",
+          "start": 47.421,
+          "end": 47.741
+        },
+        {
+          "word": "10:33 ",
+          "start": 47.821,
+          "end": 48.541
+        },
+        {
+          "word": "PM ",
+          "start": 48.541,
+          "end": 48.941
+        },
+        {
+          "word": "where ",
+          "start": 49.021,
+          "end": 49.021
+        },
+        {
+          "word": "you ",
+          "start": 49.101,
+          "end": 49.181
+        },
+        {
+          "word": "are ",
+          "start": 49.261,
+          "end": 49.261
+        },
+        {
+          "word": "right ",
+          "start": 49.341,
+          "end": 49.421
+        },
+        {
+          "word": "now?",
+          "start": 49.421,
+          "end": 49.741
+        }
+      ],
+      "metadata": {
+        "response_id": 10
+      }
+    },
+    {
+      "role": "agent",
+      "content": "Before I ",
+      "words": [
+        {
+          "word": "Before ",
+          "start": 50.63129370117188,
+          "end": 50.966
+        },
+        {
+          "word": "I ",
+          "start": 51.046,
+          "end": 51.046
+        }
+      ],
+      "metadata": {
+        "response_id": 11
+      }
+    },
+    {
+      "role": "user",
+      "content": "No. ",
+      "words": [
+        {
+          "word": "No. ",
+          "start": 51.298,
+          "end": 51.538002
+        }
+      ]
+    },
+    {
+      "role": "agent",
+      "content": "check the available consultation times, I have you in India Standard Time, and it looks like it’s around 12:02 PM where you are. Is that correct?",
+      "words": [
+        {
+          "word": "check ",
+          "start": 51.12600048828125,
+          "end": 51.366
+        },
+        {
+          "word": "the ",
+          "start": 51.446,
+          "end": 51.446
+        },
+        {
+          "word": "available ",
+          "start": 51.446,
+          "end": 51.926
+        },
+        {
+          "word": "consultation ",
+          "start": 51.926,
+          "end": 52.566
+        },
+        {
+          "word": "times, ",
+          "start": 52.566000244140625,
+          "end": 53.126
+        },
+        {
+          "word": "I ",
+          "start": 53.3255927734375,
+          "end": 53.366
+        },
+        {
+          "word": "have ",
+          "start": 53.446,
+          "end": 53.606
+        },
+        {
+          "word": "you ",
+          "start": 53.686,
+          "end": 53.686
+        },
+        {
+          "word": "in ",
+          "start": 53.766,
+          "end": 53.846
+        },
+        {
+          "word": "India ",
+          "start": 53.84600341796875,
+          "end": 54.246
+        },
+        {
+          "word": "Standard ",
+          "start": 54.326,
+          "end": 54.646
+        },
+        {
+          "word": "Time, ",
+          "start": 54.646,
+          "end": 55.126
+        },
+        {
+          "word": "and ",
+          "start": 55.31279272460937,
+          "end": 55.446
+        },
+        {
+          "word": "it ",
+          "start": 55.446,
+          "end": 55.606
+        },
+        {
+          "word": "looks ",
+          "start": 55.686,
+          "end": 55.766
+        },
+        {
+          "word": "like ",
+          "start": 55.846,
+          "end": 55.926
+        },
+        {
+          "word": "it’s ",
+          "start": 56.006,
+          "end": 56.086
+        },
+        {
+          "word": "around ",
+          "start": 56.086,
+          "end": 56.406
+        },
+        {
+          "word": "12:02 ",
+          "start": 56.4860078125,
+          "end": 57.126
+        },
+        {
+          "word": "PM ",
+          "start": 57.2060009765625,
+          "end": 57.526
+        },
+        {
+          "word": "where ",
+          "start": 57.606,
+          "end": 57.686
+        },
+        {
+          "word": "you ",
+          "start": 57.766,
+          "end": 57.766
+        },
+        {
+          "word": "are.",
+          "start": 57.766,
+          "end": 58.086
+        },
+        {
+          "word": " Is ",
+          "start": 58.296944580078126,
+          "end": 58.406
+        },
+        {
+          "word": "that ",
+          "start": 58.486,
+          "end": 58.566
+        },
+        {
+          "word": "correct?",
+          "start": 58.566,
+          "end": 59.046
+        }
+      ],
+      "metadata": {
+        "response_id": 11
+      }
+    },
+    {
+      "role": "user",
+      "content": "Yes. Yes. ",
+      "words": [
+        {
+          "word": "Yes. ",
+          "start": 59.938,
+          "end": 60.258003
+        },
+        {
+          "word": "Yes. ",
+          "start": 60.618,
+          "end": 60.938
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "content": "Yes. ",
+      "words": [
+        {
+          "word": "Yes. ",
+          "start": 64.46799999999999,
+          "end": 64.868
+        }
+      ]
+    },
+    {
+      "role": "agent",
+      "content": "Which date would work best for your ",
+      "words": [
+        {
+          "word": "Which ",
+          "start": 65.63163745117187,
+          "end": 65.925
+        },
+        {
+          "word": "date ",
+          "start": 66.005,
+          "end": 66.165
+        },
+        {
+          "word": "would ",
+          "start": 66.245,
+          "end": 66.325
+        },
+        {
+          "word": "work ",
+          "start": 66.405,
+          "end": 66.485
+        },
+        {
+          "word": "best ",
+          "start": 66.48500024414062,
+          "end": 66.885
+        },
+        {
+          "word": "for ",
+          "start": 66.965,
+          "end": 66.965
+        },
+        {
+          "word": "your ",
+          "start": 67.045,
+          "end": 67.045
+        }
+      ],
+      "metadata": {
+        "response_id": 14
+      }
+    },
+    {
+      "role": "agent",
+      "content": "I have Friday, November 20th at 1:00, 1:15, or 1:30 PM Pacific ",
+      "words": [
+        {
+          "word": "I ",
+          "start": 68.49,
+          "end": 68.57
+        },
+        {
+          "word": "have ",
+          "start": 68.57,
+          "end": 68.81
+        },
+        {
+          "word": "Friday, ",
+          "start": 68.81,
+          "end": 69.45
+        },
+        {
+          "word": "November ",
+          "start": 69.60987915039063,
+          "end": 69.93
+        },
+        {
+          "word": "20th ",
+          "start": 69.93,
+          "end": 70.49
+        },
+        {
+          "word": "at ",
+          "start": 70.57000048828125,
+          "end": 70.65
+        },
+        {
+          "word": "1:00, ",
+          "start": 70.73,
+          "end": 71.69
+        },
+        {
+          "word": "1:15, ",
+          "start": 71.69,
+          "end": 72.65
+        },
+        {
+          "word": "or ",
+          "start": 72.86053540039063,
+          "end": 73.05
+        },
+        {
+          "word": "1:30 ",
+          "start": 73.13,
+          "end": 73.61
+        },
+        {
+          "word": "PM ",
+          "start": 73.69000024414062,
+          "end": 73.93
+        },
+        {
+          "word": "Pacific ",
+          "start": 73.93000146484376,
+          "end": 74.41
+        }
+      ],
+      "metadata": {
+        "response_id": 15,
+        "interrupted": true
+      }
+    },
+    {
+      "role": "user",
+      "content": "Friday doesn't work. For me. Do you have any slots on Monday? ",
+      "words": [
+        {
+          "word": "Friday ",
+          "start": 74.298,
+          "end": 74.618
+        },
+        {
+          "word": "doesn't ",
+          "start": 74.618,
+          "end": 74.93799999999999
+        },
+        {
+          "word": "work. ",
+          "start": 74.93799999999999,
+          "end": 75.178005
+        },
+        {
+          "word": "For ",
+          "start": 75.21799999999999,
+          "end": 75.538
+        },
+        {
+          "word": "me. ",
+          "start": 75.538,
+          "end": 75.85799999999999
+        },
+        {
+          "word": "Do ",
+          "start": 75.85799999999999,
+          "end": 76.018
+        },
+        {
+          "word": "you ",
+          "start": 76.018,
+          "end": 76.097996
+        },
+        {
+          "word": "have ",
+          "start": 76.097996,
+          "end": 76.258
+        },
+        {
+          "word": "any ",
+          "start": 76.258,
+          "end": 76.41799499999999
+        },
+        {
+          "word": "slots ",
+          "start": 76.41799499999999,
+          "end": 76.737995
+        },
+        {
+          "word": "on ",
+          "start": 76.737995,
+          "end": 76.898
+        },
+        {
+          "word": "Monday? ",
+          "start": 76.898,
+          "end": 77.13799999999999
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "content": "Hello? ",
+      "words": [
+        {
+          "word": "Hello? ",
+          "start": 84.20800399999999,
+          "end": 84.448
+        }
+      ]
+    },
+    {
+      "role": "agent",
+      "content": "Yes, I’m here. I’m sorry, there don’t seem to be any available consultation slots on Monday, November 23rd. Would another date work for you?",
+      "words": [
+        {
+          "word": "Yes, ",
+          "start": 86.18965454101563,
+          "end": 86.601
+        },
+        {
+          "word": "I’m ",
+          "start": 86.83515649414062,
+          "end": 86.921
+        },
+        {
+          "word": "here.",
+          "start": 86.921,
+          "end": 87.401
+        },
+        {
+          "word": " I’m ",
+          "start": 87.64048950195313,
+          "end": 87.801
+        },
+        {
+          "word": "sorry, ",
+          "start": 87.801,
+          "end": 88.441
+        },
+        {
+          "word": "there ",
+          "start": 88.60201879882813,
+          "end": 88.761
+        },
+        {
+          "word": "don’t ",
+          "start": 88.841,
+          "end": 88.921
+        },
+        {
+          "word": "seem ",
+          "start": 88.921,
+          "end": 89.161
+        },
+        {
+          "word": "to ",
+          "start": 89.241,
+          "end": 89.241
+        },
+        {
+          "word": "be ",
+          "start": 89.321,
+          "end": 89.401
+        },
+        {
+          "word": "any ",
+          "start": 89.481,
+          "end": 89.641
+        },
+        {
+          "word": "available ",
+          "start": 89.641,
+          "end": 90.121
+        },
+        {
+          "word": "consultation ",
+          "start": 90.121,
+          "end": 90.841
+        },
+        {
+          "word": "slots ",
+          "start": 90.921,
+          "end": 91.241
+        },
+        {
+          "word": "on ",
+          "start": 91.32100024414062,
+          "end": 91.481
+        },
+        {
+          "word": "Monday, ",
+          "start": 91.481,
+          "end": 92.041
+        },
+        {
+          "word": "November ",
+          "start": 92.13376904296875,
+          "end": 92.441
+        },
+        {
+          "word": "23rd.",
+          "start": 92.441,
+          "end": 93.241
+        },
+        {
+          "word": " Would ",
+          "start": 93.40123999023437,
+          "end": 93.561
+        },
+        {
+          "word": "another ",
+          "start": 93.641,
+          "end": 93.801
+        },
+        {
+          "word": "date ",
+          "start": 93.881,
+          "end": 94.041
+        },
+        {
+          "word": "work ",
+          "start": 94.041,
+          "end": 94.201
+        },
+        {
+          "word": "for ",
+          "start": 94.281,
+          "end": 94.361
+        },
+        {
+          "word": "you?",
+          "start": 94.441,
+          "end": 94.521
+        }
+      ],
+      "metadata": {
+        "response_id": 19
+      }
+    },
+    {
+      "role": "user",
+      "content": "Yeah. Like, Tuesday? ",
+      "words": [
+        {
+          "word": "Yeah. ",
+          "start": 95.298,
+          "end": 95.85799999999999
+        },
+        {
+          "word": "Like, ",
+          "start": 95.85799999999999,
+          "end": 96.178
+        },
+        {
+          "word": "Tuesday? ",
+          "start": 96.178,
+          "end": 96.49799999999999
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "content": "Or ",
+      "words": [
+        {
+          "word": "Or ",
+          "start": 96.85800499999999,
+          "end": 97.25801
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "content": "Wednesday or ",
+      "words": [
+        {
+          "word": "Wednesday ",
+          "start": 97.25801,
+          "end": 97.658
+        },
+        {
+          "word": "or ",
+          "start": 97.658,
+          "end": 97.978
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "content": "any other day in that week? ",
+      "words": [
+        {
+          "word": "any ",
+          "start": 97.978,
+          "end": 98.21800599999999
+        },
+        {
+          "word": "other ",
+          "start": 98.21800599999999,
+          "end": 98.538006
+        },
+        {
+          "word": "day ",
+          "start": 98.538006,
+          "end": 98.698
+        },
+        {
+          "word": "in ",
+          "start": 98.698,
+          "end": 98.85800499999999
+        },
+        {
+          "word": "that ",
+          "start": 98.85800499999999,
+          "end": 99.018
+        },
+        {
+          "word": "week? ",
+          "start": 99.018,
+          "end": 99.178005
+        }
+      ]
+    },
+    {
+      "role": "agent",
+      "content": "I’ll check availability ",
+      "words": [
+        {
+          "word": "I’ll ",
+          "start": 100.360794921875,
+          "end": 100.521
+        },
+        {
+          "word": "check ",
+          "start": 100.601,
+          "end": 100.761
+        },
+        {
+          "word": "availability ",
+          "start": 100.761,
+          "end": 101.481
+        }
+      ],
+      "metadata": {
+        "response_id": 21
+      }
+    },
+    {
+      "role": "agent",
+      "content": "I’m sorry, there don’t seem to be any available consultation slots on ",
+      "words": [
+        {
+          "word": "I’m ",
+          "start": 102.55614526367188,
+          "end": 102.726
+        },
+        {
+          "word": "sorry, ",
+          "start": 102.726,
+          "end": 103.446
+        },
+        {
+          "word": "there ",
+          "start": 103.60838671875,
+          "end": 103.686
+        },
+        {
+          "word": "don’t ",
+          "start": 103.766,
+          "end": 103.926
+        },
+        {
+          "word": "seem ",
+          "start": 103.926,
+          "end": 104.166
+        },
+        {
+          "word": "to ",
+          "start": 104.246,
+          "end": 104.246
+        },
+        {
+          "word": "be ",
+          "start": 104.326,
+          "end": 104.406
+        },
+        {
+          "word": "any ",
+          "start": 104.48600439453125,
+          "end": 104.726
+        },
+        {
+          "word": "available ",
+          "start": 104.726,
+          "end": 105.206
+        },
+        {
+          "word": "consultation ",
+          "start": 105.28600024414062,
+          "end": 105.926
+        },
+        {
+          "word": "slots ",
+          "start": 105.926,
+          "end": 106.406
+        },
+        {
+          "word": "on ",
+          "start": 106.486,
+          "end": 106.566
+        }
+      ],
+      "metadata": {
+        "response_id": 22
+      }
+    },
+    {
+      "role": "user",
+      "content": "Yeah. ",
+      "words": [
+        {
+          "word": "Yeah. ",
+          "start": 106.85799999999999,
+          "end": 107.178
+        }
+      ]
+    },
+    {
+      "role": "agent",
+      "content": "Tuesday, November 24th. Would another date work for you?",
+      "words": [
+        {
+          "word": "Tuesday, ",
+          "start": 106.56600048828125,
+          "end": 107.366
+        },
+        {
+          "word": "November ",
+          "start": 107.4460029296875,
+          "end": 107.846
+        },
+        {
+          "word": "24th.",
+          "start": 107.846,
+          "end": 108.566
+        },
+        {
+          "word": " Would ",
+          "start": 108.78234033203125,
+          "end": 108.966
+        },
+        {
+          "word": "another ",
+          "start": 109.046,
+          "end": 109.206
+        },
+        {
+          "word": "date ",
+          "start": 109.206,
+          "end": 109.446
+        },
+        {
+          "word": "work ",
+          "start": 109.526,
+          "end": 109.606
+        },
+        {
+          "word": "for ",
+          "start": 109.686,
+          "end": 109.766
+        },
+        {
+          "word": "you?",
+          "start": 109.766,
+          "end": 109.926
+        }
+      ],
+      "metadata": {
+        "response_id": 22
+      }
+    },
+    {
+      "role": "user",
+      "content": "Yeah. ",
+      "words": [
+        {
+          "word": "Yeah. ",
+          "start": 112.908,
+          "end": 113.228
+        }
+      ]
+    },
+    {
+      "role": "agent",
+      "content": "Which other date would work best for you?",
+      "words": [
+        {
+          "word": "Which ",
+          "start": 114.47244262695312,
+          "end": 114.791
+        },
+        {
+          "word": "other ",
+          "start": 114.871,
+          "end": 114.951
+        },
+        {
+          "word": "date ",
+          "start": 115.031,
+          "end": 115.191
+        },
+        {
+          "word": "would ",
+          "start": 115.191,
+          "end": 115.351
+        },
+        {
+          "word": "work ",
+          "start": 115.431,
+          "end": 115.511
+        },
+        {
+          "word": "best ",
+          "start": 115.591,
+          "end": 115.831
+        },
+        {
+          "word": "for ",
+          "start": 115.911,
+          "end": 115.911
+        },
+        {
+          "word": "you?",
+          "start": 115.911,
+          "end": 116.231
+        }
+      ],
+      "metadata": {
+        "response_id": 23
+      }
+    },
+    {
+      "role": "user",
+      "content": "Yeah. Yeah. C Wednesday. Lubin two, Wednesday. ",
+      "words": [
+        {
+          "word": "Yeah. ",
+          "start": 120.60799999999999,
+          "end": 121.008
+        },
+        {
+          "word": "Yeah. ",
+          "start": 122.368,
+          "end": 122.767994
+        },
+        {
+          "word": "C ",
+          "start": 122.767994,
+          "end": 123.08798999999999
+        },
+        {
+          "word": "Wednesday. ",
+          "start": 123.08798999999999,
+          "end": 123.568
+        },
+        {
+          "word": "Lubin ",
+          "start": 123.878,
+          "end": 124.27799999999999
+        },
+        {
+          "word": "two, ",
+          "start": 124.27799999999999,
+          "end": 124.518
+        },
+        {
+          "word": "Wednesday. ",
+          "start": 124.518,
+          "end": 124.838
+        }
+      ]
+    },
+    {
+      "role": "agent",
+      "content": "I’m sorry, there don’t seem to be any available consultation slots on ",
+      "words": [
+        {
+          "word": "I’m ",
+          "start": 132.89609765625,
+          "end": 133.06
+        },
+        {
+          "word": "sorry, ",
+          "start": 133.14,
+          "end": 133.7
+        },
+        {
+          "word": "there ",
+          "start": 133.8312561035156,
+          "end": 134.02
+        },
+        {
+          "word": "don’t ",
+          "start": 134.1,
+          "end": 134.26
+        },
+        {
+          "word": "seem ",
+          "start": 134.34,
+          "end": 134.42
+        },
+        {
+          "word": "to ",
+          "start": 134.5,
+          "end": 134.5
+        },
+        {
+          "word": "be ",
+          "start": 134.5,
+          "end": 134.66
+        },
+        {
+          "word": "any ",
+          "start": 134.740076171875,
+          "end": 134.98
+        },
+        {
+          "word": "available ",
+          "start": 134.98,
+          "end": 135.46
+        },
+        {
+          "word": "consultation ",
+          "start": 135.46,
+          "end": 136.18
+        },
+        {
+          "word": "slots ",
+          "start": 136.26,
+          "end": 136.66
+        },
+        {
+          "word": "on ",
+          "start": 136.74,
+          "end": 136.82
+        }
+      ],
+      "metadata": {
+        "response_id": 28,
+        "interrupted": true
+      }
+    },
+    {
+      "role": "user",
+      "content": "Then when is the next available? When is the next available? You find the next available. Right? Whenever it is there, Don't ask me the day. ",
+      "words": [
+        {
+          "word": "Then ",
+          "start": 136.778,
+          "end": 137.01801
+        },
+        {
+          "word": "when ",
+          "start": 137.01801,
+          "end": 137.25799999999998
+        },
+        {
+          "word": "is ",
+          "start": 137.25799999999998,
+          "end": 137.418
+        },
+        {
+          "word": "the ",
+          "start": 137.418,
+          "end": 137.578
+        },
+        {
+          "word": "next ",
+          "start": 137.578,
+          "end": 137.65801
+        },
+        {
+          "word": "available? ",
+          "start": 137.728,
+          "end": 138.608
+        },
+        {
+          "word": "When ",
+          "start": 138.608,
+          "end": 138.84799999999998
+        },
+        {
+          "word": "is ",
+          "start": 138.84799999999998,
+          "end": 139.00799999999998
+        },
+        {
+          "word": "the ",
+          "start": 139.00799999999998,
+          "end": 139.088
+        },
+        {
+          "word": "next ",
+          "start": 139.088,
+          "end": 139.328
+        },
+        {
+          "word": "available? ",
+          "start": 139.328,
+          "end": 139.808
+        },
+        {
+          "word": "You ",
+          "start": 139.808,
+          "end": 139.888
+        },
+        {
+          "word": "find ",
+          "start": 139.888,
+          "end": 140.128
+        },
+        {
+          "word": "the ",
+          "start": 140.128,
+          "end": 140.208
+        },
+        {
+          "word": "next ",
+          "start": 140.208,
+          "end": 140.448
+        },
+        {
+          "word": "available. ",
+          "start": 140.448,
+          "end": 141.00799999999998
+        },
+        {
+          "word": "Right? ",
+          "start": 141.00799999999998,
+          "end": 141.408
+        },
+        {
+          "word": "Whenever ",
+          "start": 141.408,
+          "end": 141.728
+        },
+        {
+          "word": "it ",
+          "start": 141.728,
+          "end": 141.968
+        },
+        {
+          "word": "is ",
+          "start": 141.968,
+          "end": 142.048
+        },
+        {
+          "word": "there, ",
+          "start": 142.048,
+          "end": 142.28799999999998
+        },
+        {
+          "word": "Don't ",
+          "start": 142.428,
+          "end": 142.748
+        },
+        {
+          "word": "ask ",
+          "start": 142.748,
+          "end": 143.148
+        },
+        {
+          "word": "me ",
+          "start": 143.148,
+          "end": 143.308
+        },
+        {
+          "word": "the ",
+          "start": 143.308,
+          "end": 143.46799
+        },
+        {
+          "word": "day. ",
+          "start": 143.46799,
+          "end": 143.628
+        }
+      ]
+    },
+    {
+      "role": "agent",
+      "content": "The soonest available times are Friday, November 20th at 1:00, ",
+      "words": [
+        {
+          "word": "The ",
+          "start": 153.54975048828126,
+          "end": 153.63
+        },
+        {
+          "word": "soonest ",
+          "start": 153.71,
+          "end": 154.11
+        },
+        {
+          "word": "available ",
+          "start": 154.11,
+          "end": 154.51
+        },
+        {
+          "word": "times ",
+          "start": 154.51000024414063,
+          "end": 155.07
+        },
+        {
+          "word": "are ",
+          "start": 155.1500009765625,
+          "end": 155.23
+        },
+        {
+          "word": "Friday, ",
+          "start": 155.23,
+          "end": 156.03
+        },
+        {
+          "word": "November ",
+          "start": 156.189345703125,
+          "end": 156.51
+        },
+        {
+          "word": "20th ",
+          "start": 156.51,
+          "end": 157.15
+        },
+        {
+          "word": "at ",
+          "start": 157.15094067382813,
+          "end": 157.47
+        },
+        {
+          "word": "1:00, ",
+          "start": 157.55,
+          "end": 158.47
+        }
+      ],
+      "metadata": {
+        "response_id": 36,
+        "interrupted": true
+      }
+    },
+    {
+      "role": "user",
+      "content": "Yeah. Then book it for one o'clock. ",
+      "words": [
+        {
+          "word": "Yeah. ",
+          "start": 158.558,
+          "end": 158.95801
+        },
+        {
+          "word": "Then ",
+          "start": 159.28799999999998,
+          "end": 159.68798999999999
+        },
+        {
+          "word": "book ",
+          "start": 159.68798999999999,
+          "end": 160.00799999999998
+        },
+        {
+          "word": "it ",
+          "start": 160.00799999999998,
+          "end": 160.168
+        },
+        {
+          "word": "for ",
+          "start": 160.168,
+          "end": 160.32799
+        },
+        {
+          "word": "one ",
+          "start": 160.32799,
+          "end": 160.488
+        },
+        {
+          "word": "o'clock. ",
+          "start": 160.488,
+          "end": 160.888
+        }
+      ]
+    },
+    {
+      "role": "agent",
+      "content": "For your Nepal consultation on Friday, November 20th at 1 PM Pacific Time, would you prefer phone, WhatsApp, or video?",
+      "words": [
+        {
+          "word": "For ",
+          "start": 162.21457934570313,
+          "end": 162.383
+        },
+        {
+          "word": "your ",
+          "start": 162.463,
+          "end": 162.543
+        },
+        {
+          "word": "Nepal ",
+          "start": 162.623,
+          "end": 162.943
+        },
+        {
+          "word": "consultation ",
+          "start": 162.943,
+          "end": 163.743
+        },
+        {
+          "word": "on ",
+          "start": 163.743,
+          "end": 163.903
+        },
+        {
+          "word": "Friday, ",
+          "start": 163.983,
+          "end": 164.623
+        },
+        {
+          "word": "November ",
+          "start": 164.70291162109376,
+          "end": 165.103
+        },
+        {
+          "word": "20th ",
+          "start": 165.103,
+          "end": 165.663
+        },
+        {
+          "word": "at ",
+          "start": 165.74417602539063,
+          "end": 165.903
+        },
+        {
+          "word": "1 ",
+          "start": 165.983,
+          "end": 166.143
+        },
+        {
+          "word": "PM ",
+          "start": 166.143,
+          "end": 166.463
+        },
+        {
+          "word": "Pacific ",
+          "start": 166.543,
+          "end": 166.943
+        },
+        {
+          "word": "Time, ",
+          "start": 166.943,
+          "end": 167.343
+        },
+        {
+          "word": "would ",
+          "start": 167.59393627929688,
+          "end": 167.903
+        },
+        {
+          "word": "you ",
+          "start": 167.983,
+          "end": 167.983
+        },
+        {
+          "word": "prefer ",
+          "start": 168.063,
+          "end": 168.383
+        },
+        {
+          "word": "phone, ",
+          "start": 168.383,
+          "end": 168.943
+        },
+        {
+          "word": "WhatsApp, ",
+          "start": 169.07810864257812,
+          "end": 169.903
+        },
+        {
+          "word": "or ",
+          "start": 170.06291381835936,
+          "end": 170.143
+        },
+        {
+          "word": "video?",
+          "start": 170.143,
+          "end": 170.623
+        }
+      ],
+      "metadata": {
+        "response_id": 37
+      }
+    },
+    {
+      "role": "user",
+      "content": "Yeah. I prefer phone. ",
+      "words": [
+        {
+          "word": "Yeah. ",
+          "start": 171.84799999999998,
+          "end": 172.32799
+        },
+        {
+          "word": "I ",
+          "start": 172.32799,
+          "end": 172.56799999999998
+        },
+        {
+          "word": "prefer ",
+          "start": 172.56799999999998,
+          "end": 172.888
+        },
+        {
+          "word": "phone. ",
+          "start": 172.888,
+          "end": 173.208
+        }
+      ]
+    },
+    {
+      "role": "agent",
+      "content": "Just to confirm, should I book your Nepal consultation for Friday, November 20th at 1 PM Pacific Time by phone?",
+      "words": [
+        {
+          "word": "Just ",
+          "start": 174.2992431640625,
+          "end": 174.54
+        },
+        {
+          "word": "to ",
+          "start": 174.62,
+          "end": 174.62
+        },
+        {
+          "word": "confirm, ",
+          "start": 174.62,
+          "end": 175.34
+        },
+        {
+          "word": "should ",
+          "start": 175.5000400390625,
+          "end": 175.66
+        },
+        {
+          "word": "I ",
+          "start": 175.74,
+          "end": 175.74
+        },
+        {
+          "word": "book ",
+          "start": 175.74000024414062,
+          "end": 175.98
+        },
+        {
+          "word": "your ",
+          "start": 176.06,
+          "end": 176.06
+        },
+        {
+          "word": "Nepal ",
+          "start": 176.1400009765625,
+          "end": 176.46
+        },
+        {
+          "word": "consultation ",
+          "start": 176.46000024414062,
+          "end": 177.26
+        },
+        {
+          "word": "for ",
+          "start": 177.34,
+          "end": 177.5
+        },
+        {
+          "word": "Friday, ",
+          "start": 177.5,
+          "end": 178.3
+        },
+        {
+          "word": "November ",
+          "start": 178.38027880859374,
+          "end": 178.78
+        },
+        {
+          "word": "20th ",
+          "start": 178.78000048828125,
+          "end": 179.42
+        },
+        {
+          "word": "at ",
+          "start": 179.50011450195314,
+          "end": 179.66
+        },
+        {
+          "word": "1 ",
+          "start": 179.74000048828125,
+          "end": 179.9
+        },
+        {
+          "word": "PM ",
+          "start": 179.9000002441406,
+          "end": 180.22
+        },
+        {
+          "word": "Pacific ",
+          "start": 180.3,
+          "end": 180.7
+        },
+        {
+          "word": "Time ",
+          "start": 180.7,
+          "end": 180.94
+        },
+        {
+          "word": "by ",
+          "start": 181.02,
+          "end": 181.1
+        },
+        {
+          "word": "phone?",
+          "start": 181.18,
+          "end": 181.42
+        }
+      ],
+      "metadata": {
+        "response_id": 38
+      }
+    },
+    {
+      "role": "user",
+      "content": "Yeah. Do that. ",
+      "words": [
+        {
+          "word": "Yeah. ",
+          "start": 182.428,
+          "end": 182.74799
+        },
+        {
+          "word": "Do ",
+          "start": 182.74799,
+          "end": 183.06799999999998
+        },
+        {
+          "word": "that. ",
+          "start": 183.06799999999998,
+          "end": 183.22799
+        }
+      ]
+    },
+    {
+      "role": "agent",
+      "content": "Okay, ",
+      "words": [
+        {
+          "word": "Okay, ",
+          "start": 184.30057202148438,
+          "end": 184.779
+        }
+      ],
+      "metadata": {
+        "response_id": 40
+      }
+    },
+    {
+      "role": "agent",
+      "content": "I’m booking that now.",
+      "words": [
+        {
+          "word": "I’m ",
+          "start": 184.98387670898438,
+          "end": 185.099
+        },
+        {
+          "word": "booking ",
+          "start": 185.099,
+          "end": 185.419
+        },
+        {
+          "word": "that ",
+          "start": 185.499,
+          "end": 185.579
+        },
+        {
+          "word": "now.",
+          "start": 185.579,
+          "end": 186.059
+        }
+      ],
+      "metadata": {
+        "response_id": 40
+      }
+    },
+    {
+      "role": "user",
+      "content": "Done. ",
+      "words": [
+        {
+          "word": "Done. ",
+          "start": 196.628,
+          "end": 196.868
+        }
+      ]
+    },
+    {
+      "role": "agent",
+      "content": "I’m just waiting for the confirmation.",
+      "words": [
+        {
+          "word": "I’m ",
+          "start": 197.821439453125,
+          "end": 197.982
+        },
+        {
+          "word": "just ",
+          "start": 198.062,
+          "end": 198.142
+        },
+        {
+          "word": "waiting ",
+          "start": 198.222,
+          "end": 198.462
+        },
+        {
+          "word": "for ",
+          "start": 198.542,
+          "end": 198.542
+        },
+        {
+          "word": "the ",
+          "start": 198.622,
+          "end": 198.622
+        },
+        {
+          "word": "confirmation.",
+          "start": 198.622,
+          "end": 199.502
+        }
+      ],
+      "metadata": {
+        "response_id": 41
+      }
+    },
+    {
+      "role": "agent",
+      "content": "Your consultation is booked for Friday, November 20th at 1 PM Pacific Time by phone. David Urmann will be your consultant. Thanks for ",
+      "words": [
+        {
+          "word": "Your ",
+          "start": 208.18387768554686,
+          "end": 208.344
+        },
+        {
+          "word": "consultation ",
+          "start": 208.344,
+          "end": 209.064
+        },
+        {
+          "word": "is ",
+          "start": 209.064,
+          "end": 209.224
+        },
+        {
+          "word": "booked ",
+          "start": 209.304,
+          "end": 209.464
+        },
+        {
+          "word": "for ",
+          "start": 209.544,
+          "end": 209.704
+        },
+        {
+          "word": "Friday, ",
+          "start": 209.704,
+          "end": 210.344
+        },
+        {
+          "word": "November ",
+          "start": 210.50405004882813,
+          "end": 210.904
+        },
+        {
+          "word": "20th ",
+          "start": 210.904,
+          "end": 211.384
+        },
+        {
+          "word": "at ",
+          "start": 211.51348510742187,
+          "end": 211.624
+        },
+        {
+          "word": "1 ",
+          "start": 211.62400024414063,
+          "end": 211.944
+        },
+        {
+          "word": "PM ",
+          "start": 212.024,
+          "end": 212.344
+        },
+        {
+          "word": "Pacific ",
+          "start": 212.344,
+          "end": 212.824
+        },
+        {
+          "word": "Time ",
+          "start": 212.904,
+          "end": 213.144
+        },
+        {
+          "word": "by ",
+          "start": 213.224,
+          "end": 213.224
+        },
+        {
+          "word": "phone.",
+          "start": 213.224,
+          "end": 213.704
+        },
+        {
+          "word": " David ",
+          "start": 213.91693310546876,
+          "end": 214.264
+        },
+        {
+          "word": "Urmann ",
+          "start": 214.2640036621094,
+          "end": 214.664
+        },
+        {
+          "word": "will ",
+          "start": 214.744,
+          "end": 214.744
+        },
+        {
+          "word": "be ",
+          "start": 214.824,
+          "end": 214.904
+        },
+        {
+          "word": "your ",
+          "start": 214.984,
+          "end": 214.984
+        },
+        {
+          "word": "consultant.",
+          "start": 214.984,
+          "end": 215.784
+        },
+        {
+          "word": " Thanks ",
+          "start": 216.07396801757812,
+          "end": 216.344
+        },
+        {
+          "word": "for ",
+          "start": 216.424,
+          "end": 216.424
+        }
+      ],
+      "metadata": {
+        "response_id": 42
+      }
+    },
+    {
+      "role": "user",
+      "content": "Awesome. ",
+      "words": [
+        {
+          "word": "Awesome. ",
+          "start": 216.678,
+          "end": 217.078
+        }
+      ]
+    },
+    {
+      "role": "agent",
+      "content": "booking—have a great ",
+      "words": [
+        {
+          "word": "booking—have ",
+          "start": 216.504,
+          "end": 217.144
+        },
+        {
+          "word": "a ",
+          "start": 217.224,
+          "end": 217.224
+        },
+        {
+          "word": "great ",
+          "start": 217.304,
+          "end": 217.464
+        }
+      ],
+      "metadata": {
+        "response_id": 42
+      }
+    }
+  ],
+  "transcript_with_tool_calls": [
+    {
+      "role": "node_transition",
+      "former_node_id": "begin",
+      "former_node_name": "begin",
+      "new_node_id": "start-node-1791903579650",
+      "new_node_name": "Welcome Node",
+      "time_sec": 0.001,
+      "transition_type": "normal"
+    },
+    {
+      "role": "agent",
+      "content": "Hi nishka, this is a travel consultant calling from himalayanwonders.com. I'm calling about your enquiry for Nepal. Is now a good time for a quick conversation about your travel plans?",
+      "words": [
+        {
+          "word": "Hi ",
+          "start": 0.211117919921875,
+          "end": 0.372
+        },
+        {
+          "word": "nishka, ",
+          "start": 0.452,
+          "end": 0.932
+        },
+        {
+          "word": "this ",
+          "start": 1.05510009765625,
+          "end": 1.252
+        },
+        {
+          "word": "is ",
+          "start": 1.332,
+          "end": 1.332
+        },
+        {
+          "word": "a ",
+          "start": 1.412,
+          "end": 1.412
+        },
+        {
+          "word": "travel ",
+          "start": 1.492,
+          "end": 1.732
+        },
+        {
+          "word": "consultant ",
+          "start": 1.732,
+          "end": 2.292
+        },
+        {
+          "word": "calling ",
+          "start": 2.372,
+          "end": 2.612
+        },
+        {
+          "word": "from ",
+          "start": 2.612,
+          "end": 2.852
+        },
+        {
+          "word": "himalayanwonders.com. ",
+          "start": 2.932000244140625,
+          "end": 4.452
+        },
+        {
+          "word": "I'm ",
+          "start": 4.744883056640625,
+          "end": 4.852
+        },
+        {
+          "word": "calling ",
+          "start": 4.932,
+          "end": 5.092
+        },
+        {
+          "word": "about ",
+          "start": 5.172,
+          "end": 5.332
+        },
+        {
+          "word": "your ",
+          "start": 5.332,
+          "end": 5.492
+        },
+        {
+          "word": "enquiry ",
+          "start": 5.492,
+          "end": 6.052
+        },
+        {
+          "word": "for ",
+          "start": 6.052,
+          "end": 6.212
+        },
+        {
+          "word": "Nepal. ",
+          "start": 6.292,
+          "end": 6.692
+        },
+        {
+          "word": "Is ",
+          "start": 7.003462890625,
+          "end": 7.092
+        },
+        {
+          "word": "now ",
+          "start": 7.172,
+          "end": 7.332
+        },
+        {
+          "word": "a ",
+          "start": 7.332,
+          "end": 7.412
+        },
+        {
+          "word": "good ",
+          "start": 7.492,
+          "end": 7.572
+        },
+        {
+          "word": "time ",
+          "start": 7.652,
+          "end": 7.892
+        },
+        {
+          "word": "for ",
+          "start": 7.972,
+          "end": 8.052
+        },
+        {
+          "word": "a ",
+          "start": 8.052,
+          "end": 8.132
+        },
+        {
+          "word": "quick ",
+          "start": 8.212,
+          "end": 8.292
+        },
+        {
+          "word": "conversation ",
+          "start": 8.292,
+          "end": 9.012
+        },
+        {
+          "word": "about ",
+          "start": 9.092,
+          "end": 9.172
+        },
+        {
+          "word": "your ",
+          "start": 9.172,
+          "end": 9.252
+        },
+        {
+          "word": "travel ",
+          "start": 9.252,
+          "end": 9.572
+        },
+        {
+          "word": "plans?",
+          "start": 9.652,
+          "end": 10.052
+        }
+      ],
+      "metadata": {
+        "response_id": 0
+      }
+    },
+    {
+      "role": "user",
+      "content": "Yes. It is. Yes. ",
+      "words": [
+        {
+          "word": "Yes. ",
+          "start": 10.538,
+          "end": 10.858001
+        },
+        {
+          "word": "It ",
+          "start": 10.858001,
+          "end": 11.018001
+        },
+        {
+          "word": "is. ",
+          "start": 11.018001,
+          "end": 11.258000000000001
+        },
+        {
+          "word": "Yes. ",
+          "start": 11.258000000000001,
+          "end": 11.418000000000001
+        }
+      ]
+    },
+    {
+      "role": "node_transition",
+      "former_node_id": "start-node-1791903579650",
+      "former_node_name": "Welcome Node",
+      "new_node_id": "node-1791905088184",
+      "new_node_name": "Travel Qualification",
+      "time_sec": 11.9,
+      "transition_type": "normal"
+    },
+    {
+      "role": "agent",
+      "content": "I see you’re considering the Everest region in 2027, with some ",
+      "words": [
+        {
+          "word": "I ",
+          "start": 12.559773193359375,
+          "end": 12.641
+        },
+        {
+          "word": "see ",
+          "start": 12.721,
+          "end": 12.881
+        },
+        {
+          "word": "you’re ",
+          "start": 12.961,
+          "end": 13.041
+        },
+        {
+          "word": "considering ",
+          "start": 13.041000244140625,
+          "end": 13.601
+        },
+        {
+          "word": "the ",
+          "start": 13.681,
+          "end": 13.761
+        },
+        {
+          "word": "Everest ",
+          "start": 13.761038818359374,
+          "end": 14.241
+        },
+        {
+          "word": "region ",
+          "start": 14.241,
+          "end": 14.721
+        },
+        {
+          "word": "in ",
+          "start": 14.801,
+          "end": 14.881
+        },
+        {
+          "word": "2027, ",
+          "start": 14.96100048828125,
+          "end": 16.001
+        },
+        {
+          "word": "with ",
+          "start": 16.162986083984375,
+          "end": 16.241
+        },
+        {
+          "word": "some ",
+          "start": 16.241,
+          "end": 16.401
+        }
+      ],
+      "metadata": {
+        "response_id": 2,
+        "interrupted": true
+      }
+    },
+    {
+      "role": "user",
+      "content": "Yep. ",
+      "words": [
+        {
+          "word": "Yep. ",
+          "start": 16.697999999999997,
+          "end": 17.177999999999997
+        }
+      ]
+    },
+    {
+      "role": "agent",
+      "content": "shorter hikes.",
+      "words": [
+        {
+          "word": "shorter ",
+          "start": 16.481,
+          "end": 16.801
+        },
+        {
+          "word": "hikes.",
+          "start": 16.801,
+          "end": 17.281
+        }
+      ],
+      "metadata": {
+        "response_id": 2,
+        "interrupted": true
+      }
+    },
+    {
+      "role": "user",
+      "content": "Correct. ",
+      "words": [
+        {
+          "word": "Correct. ",
+          "start": 17.177999999999997,
+          "end": 17.418
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "content": "Correct. ",
+      "words": [
+        {
+          "word": "Correct. ",
+          "start": 18.168,
+          "end": 18.487999
+        }
+      ]
+    },
+    {
+      "role": "agent",
+      "content": "Do you have an approximate budget range in mind for the trip?",
+      "words": [
+        {
+          "word": "Do ",
+          "start": 19.243834228515624,
+          "end": 19.335
+        },
+        {
+          "word": "you ",
+          "start": 19.415,
+          "end": 19.495
+        },
+        {
+          "word": "have ",
+          "start": 19.575,
+          "end": 19.735
+        },
+        {
+          "word": "an ",
+          "start": 19.815,
+          "end": 19.895
+        },
+        {
+          "word": "approximate ",
+          "start": 19.895,
+          "end": 20.535
+        },
+        {
+          "word": "budget ",
+          "start": 20.535,
+          "end": 20.855
+        },
+        {
+          "word": "range ",
+          "start": 20.935,
+          "end": 21.175
+        },
+        {
+          "word": "in ",
+          "start": 21.255,
+          "end": 21.255
+        },
+        {
+          "word": "mind ",
+          "start": 21.255,
+          "end": 21.575
+        },
+        {
+          "word": "for ",
+          "start": 21.655,
+          "end": 21.655
+        },
+        {
+          "word": "the ",
+          "start": 21.735,
+          "end": 21.735
+        },
+        {
+          "word": "trip?",
+          "start": 21.735,
+          "end": 22.135
+        }
+      ],
+      "metadata": {
+        "response_id": 4
+      }
+    },
+    {
+      "role": "user",
+      "content": "Yeah. Like ten k. Dollars. ",
+      "words": [
+        {
+          "word": "Yeah. ",
+          "start": 22.688,
+          "end": 23.328000999999997
+        },
+        {
+          "word": "Like ",
+          "start": 23.328000999999997,
+          "end": 23.648
+        },
+        {
+          "word": "ten ",
+          "start": 23.648,
+          "end": 24.368
+        },
+        {
+          "word": "k. ",
+          "start": 24.368,
+          "end": 24.688
+        },
+        {
+          "word": "Dollars. ",
+          "start": 24.927999999999997,
+          "end": 25.407999
+        }
+      ]
+    },
+    {
+      "role": "agent",
+      "content": "Is there anything specific you’d really like to include in the trip?",
+      "words": [
+        {
+          "word": "Is ",
+          "start": 26.408407470703125,
+          "end": 26.598
+        },
+        {
+          "word": "there ",
+          "start": 26.678,
+          "end": 26.838
+        },
+        {
+          "word": "anything ",
+          "start": 26.838,
+          "end": 27.238
+        },
+        {
+          "word": "specific ",
+          "start": 27.238,
+          "end": 28.038
+        },
+        {
+          "word": "you’d ",
+          "start": 28.118,
+          "end": 28.358
+        },
+        {
+          "word": "really ",
+          "start": 28.438,
+          "end": 28.678
+        },
+        {
+          "word": "like ",
+          "start": 28.678,
+          "end": 28.838
+        },
+        {
+          "word": "to ",
+          "start": 28.918,
+          "end": 28.998
+        },
+        {
+          "word": "include ",
+          "start": 29.078,
+          "end": 29.318
+        },
+        {
+          "word": "in ",
+          "start": 29.398,
+          "end": 29.398
+        },
+        {
+          "word": "the ",
+          "start": 29.398,
+          "end": 29.478
+        },
+        {
+          "word": "trip?",
+          "start": 29.558,
+          "end": 29.958
+        }
+      ],
+      "metadata": {
+        "response_id": 6
+      }
+    },
+    {
+      "role": "user",
+      "content": "Yeah. I like food if I want food experience. ",
+      "words": [
+        {
+          "word": "Yeah. ",
+          "start": 30.328000999999997,
+          "end": 30.808
+        },
+        {
+          "word": "I ",
+          "start": 30.808,
+          "end": 30.968
+        },
+        {
+          "word": "like ",
+          "start": 30.968,
+          "end": 31.208
+        },
+        {
+          "word": "food ",
+          "start": 31.208,
+          "end": 31.528
+        },
+        {
+          "word": "if ",
+          "start": 31.528,
+          "end": 31.768002
+        },
+        {
+          "word": "I ",
+          "start": 31.768002,
+          "end": 31.928001
+        },
+        {
+          "word": "want ",
+          "start": 31.928001,
+          "end": 32.168
+        },
+        {
+          "word": "food ",
+          "start": 32.168,
+          "end": 32.488
+        },
+        {
+          "word": "experience. ",
+          "start": 32.488,
+          "end": 32.888000000000005
+        }
+      ]
+    },
+    {
+      "role": "agent",
+      "content": "I’ll note that you’d like food experiences included. Would you like me to arrange a chat with a travel consultant to plan the ",
+      "words": [
+        {
+          "word": "I’ll ",
+          "start": 34.92992041015625,
+          "end": 35.09
+        },
+        {
+          "word": "note ",
+          "start": 35.17,
+          "end": 35.41
+        },
+        {
+          "word": "that ",
+          "start": 35.49,
+          "end": 35.49
+        },
+        {
+          "word": "you’d ",
+          "start": 35.57,
+          "end": 35.73
+        },
+        {
+          "word": "like ",
+          "start": 35.73,
+          "end": 35.97
+        },
+        {
+          "word": "food ",
+          "start": 36.05,
+          "end": 36.21
+        },
+        {
+          "word": "experiences ",
+          "start": 36.21,
+          "end": 36.93
+        },
+        {
+          "word": "included.",
+          "start": 36.93,
+          "end": 37.49
+        },
+        {
+          "word": " Would ",
+          "start": 37.74860131835938,
+          "end": 37.97
+        },
+        {
+          "word": "you ",
+          "start": 38.05,
+          "end": 38.05
+        },
+        {
+          "word": "like ",
+          "start": 38.13,
+          "end": 38.29
+        },
+        {
+          "word": "me ",
+          "start": 38.37,
+          "end": 38.37
+        },
+        {
+          "word": "to ",
+          "start": 38.37,
+          "end": 38.53
+        },
+        {
+          "word": "arrange ",
+          "start": 38.61,
+          "end": 38.85
+        },
+        {
+          "word": "a ",
+          "start": 38.93,
+          "end": 38.93
+        },
+        {
+          "word": "chat ",
+          "start": 38.93,
+          "end": 39.41
+        },
+        {
+          "word": "with ",
+          "start": 39.49,
+          "end": 39.49
+        },
+        {
+          "word": "a ",
+          "start": 39.57,
+          "end": 39.57
+        },
+        {
+          "word": "travel ",
+          "start": 39.65,
+          "end": 39.97
+        },
+        {
+          "word": "consultant ",
+          "start": 39.97,
+          "end": 40.45
+        },
+        {
+          "word": "to ",
+          "start": 40.53,
+          "end": 40.61
+        },
+        {
+          "word": "plan ",
+          "start": 40.61,
+          "end": 40.85
+        },
+        {
+          "word": "the ",
+          "start": 40.93,
+          "end": 40.93
+        }
+      ],
+      "metadata": {
+        "response_id": 7,
+        "interrupted": true
+      }
+    },
+    {
+      "role": "user",
+      "content": "Yeah, please. ",
+      "words": [
+        {
+          "word": "Yeah, ",
+          "start": 40.747997000000005,
+          "end": 41.227997
+        },
+        {
+          "word": "please. ",
+          "start": 41.227997,
+          "end": 41.387997
+        }
+      ]
+    },
+    {
+      "role": "node_transition",
+      "former_node_id": "node-1791905088184",
+      "former_node_name": "Travel Qualification",
+      "new_node_id": "node-1791906234244",
+      "new_node_name": "Consultation Requested",
+      "time_sec": 41.871,
+      "transition_type": "normal"
+    },
+    {
+      "role": "user",
+      "content": "Please do that. ",
+      "words": [
+        {
+          "word": "Please ",
+          "start": 42.008,
+          "end": 42.328
+        },
+        {
+          "word": "do ",
+          "start": 42.328,
+          "end": 42.568000000000005
+        },
+        {
+          "word": "that. ",
+          "start": 42.568000000000005,
+          "end": 42.728
+        }
+      ]
+    },
+    {
+      "role": "agent",
+      "content": "Before I check times, I just need to confirm your local time. Is it about 10:33 PM where you are right now?",
+      "words": [
+        {
+          "word": "Before ",
+          "start": 43.563689453125,
+          "end": 43.901
+        },
+        {
+          "word": "I ",
+          "start": 43.981,
+          "end": 43.981
+        },
+        {
+          "word": "check ",
+          "start": 44.061,
+          "end": 44.221
+        },
+        {
+          "word": "times, ",
+          "start": 44.221,
+          "end": 44.861
+        },
+        {
+          "word": "I ",
+          "start": 45.02315625,
+          "end": 45.101
+        },
+        {
+          "word": "just ",
+          "start": 45.181,
+          "end": 45.261
+        },
+        {
+          "word": "need ",
+          "start": 45.341,
+          "end": 45.501
+        },
+        {
+          "word": "to ",
+          "start": 45.581,
+          "end": 45.581
+        },
+        {
+          "word": "confirm ",
+          "start": 45.581,
+          "end": 45.981
+        },
+        {
+          "word": "your ",
+          "start": 46.061,
+          "end": 46.141
+        },
+        {
+          "word": "local ",
+          "start": 46.141,
+          "end": 46.381
+        },
+        {
+          "word": "time.",
+          "start": 46.461,
+          "end": 46.781
+        },
+        {
+          "word": " Is ",
+          "start": 47.07960668945312,
+          "end": 47.261
+        },
+        {
+          "word": "it ",
+          "start": 47.261,
+          "end": 47.341
+        },
+        {
+          "word": "about ",
+          "start": 47.421,
+          "end": 47.741
+        },
+        {
+          "word": "10:33 ",
+          "start": 47.821,
+          "end": 48.541
+        },
+        {
+          "word": "PM ",
+          "start": 48.541,
+          "end": 48.941
+        },
+        {
+          "word": "where ",
+          "start": 49.021,
+          "end": 49.021
+        },
+        {
+          "word": "you ",
+          "start": 49.101,
+          "end": 49.181
+        },
+        {
+          "word": "are ",
+          "start": 49.261,
+          "end": 49.261
+        },
+        {
+          "word": "right ",
+          "start": 49.341,
+          "end": 49.421
+        },
+        {
+          "word": "now?",
+          "start": 49.421,
+          "end": 49.741
+        }
+      ],
+      "metadata": {
+        "response_id": 10
+      }
+    },
+    {
+      "role": "node_transition",
+      "former_node_id": "node-1791906234244",
+      "former_node_name": "Consultation Requested",
+      "new_node_id": "node-1793648807205",
+      "new_node_name": "Confirm Customer Local Time",
+      "time_sec": 49.887,
+      "transition_type": "normal"
+    },
+    {
+      "role": "agent",
+      "content": "Before I ",
+      "words": [
+        {
+          "word": "Before ",
+          "start": 50.63129370117188,
+          "end": 50.966
+        },
+        {
+          "word": "I ",
+          "start": 51.046,
+          "end": 51.046
+        }
+      ],
+      "metadata": {
+        "response_id": 11
+      }
+    },
+    {
+      "role": "user",
+      "content": "No. ",
+      "words": [
+        {
+          "word": "No. ",
+          "start": 51.298,
+          "end": 51.538002
+        }
+      ]
+    },
+    {
+      "role": "agent",
+      "content": "check the available consultation times, I have you in India Standard Time, and it looks like it’s around 12:02 PM where you are. Is that correct?",
+      "words": [
+        {
+          "word": "check ",
+          "start": 51.12600048828125,
+          "end": 51.366
+        },
+        {
+          "word": "the ",
+          "start": 51.446,
+          "end": 51.446
+        },
+        {
+          "word": "available ",
+          "start": 51.446,
+          "end": 51.926
+        },
+        {
+          "word": "consultation ",
+          "start": 51.926,
+          "end": 52.566
+        },
+        {
+          "word": "times, ",
+          "start": 52.566000244140625,
+          "end": 53.126
+        },
+        {
+          "word": "I ",
+          "start": 53.3255927734375,
+          "end": 53.366
+        },
+        {
+          "word": "have ",
+          "start": 53.446,
+          "end": 53.606
+        },
+        {
+          "word": "you ",
+          "start": 53.686,
+          "end": 53.686
+        },
+        {
+          "word": "in ",
+          "start": 53.766,
+          "end": 53.846
+        },
+        {
+          "word": "India ",
+          "start": 53.84600341796875,
+          "end": 54.246
+        },
+        {
+          "word": "Standard ",
+          "start": 54.326,
+          "end": 54.646
+        },
+        {
+          "word": "Time, ",
+          "start": 54.646,
+          "end": 55.126
+        },
+        {
+          "word": "and ",
+          "start": 55.31279272460937,
+          "end": 55.446
+        },
+        {
+          "word": "it ",
+          "start": 55.446,
+          "end": 55.606
+        },
+        {
+          "word": "looks ",
+          "start": 55.686,
+          "end": 55.766
+        },
+        {
+          "word": "like ",
+          "start": 55.846,
+          "end": 55.926
+        },
+        {
+          "word": "it’s ",
+          "start": 56.006,
+          "end": 56.086
+        },
+        {
+          "word": "around ",
+          "start": 56.086,
+          "end": 56.406
+        },
+        {
+          "word": "12:02 ",
+          "start": 56.4860078125,
+          "end": 57.126
+        },
+        {
+          "word": "PM ",
+          "start": 57.2060009765625,
+          "end": 57.526
+        },
+        {
+          "word": "where ",
+          "start": 57.606,
+          "end": 57.686
+        },
+        {
+          "word": "you ",
+          "start": 57.766,
+          "end": 57.766
+        },
+        {
+          "word": "are.",
+          "start": 57.766,
+          "end": 58.086
+        },
+        {
+          "word": " Is ",
+          "start": 58.296944580078126,
+          "end": 58.406
+        },
+        {
+          "word": "that ",
+          "start": 58.486,
+          "end": 58.566
+        },
+        {
+          "word": "correct?",
+          "start": 58.566,
+          "end": 59.046
+        }
+      ],
+      "metadata": {
+        "response_id": 11
+      }
+    },
+    {
+      "role": "user",
+      "content": "Yes. Yes. ",
+      "words": [
+        {
+          "word": "Yes. ",
+          "start": 59.938,
+          "end": 60.258003
+        },
+        {
+          "word": "Yes. ",
+          "start": 60.618,
+          "end": 60.938
+        }
+      ]
+    },
+    {
+      "role": "node_transition",
+      "former_node_id": "node-1793648807205",
+      "former_node_name": "Confirm Customer Local Time",
+      "new_node_id": "node-1792684792464",
+      "new_node_name": "Get Available Slots",
+      "time_sec": 61.319,
+      "transition_type": "normal"
+    },
+    {
+      "role": "tool_call_invocation",
+      "tool_call_id": "tool_call_4dcb0a",
+      "name": "get_available_slots",
+      "arguments": "{\"timezone\":\"America/Los_Angeles\"}",
+      "time_sec": 62.047,
+      "type": "custom"
+    },
+    {
+      "role": "user",
+      "content": "Yes. ",
+      "words": [
+        {
+          "word": "Yes. ",
+          "start": 64.46799999999999,
+          "end": 64.868
+        }
+      ]
+    },
+    {
+      "role": "agent",
+      "content": "Which date would work best for your ",
+      "words": [
+        {
+          "word": "Which ",
+          "start": 65.63163745117187,
+          "end": 65.925
+        },
+        {
+          "word": "date ",
+          "start": 66.005,
+          "end": 66.165
+        },
+        {
+          "word": "would ",
+          "start": 66.245,
+          "end": 66.325
+        },
+        {
+          "word": "work ",
+          "start": 66.405,
+          "end": 66.485
+        },
+        {
+          "word": "best ",
+          "start": 66.48500024414062,
+          "end": 66.885
+        },
+        {
+          "word": "for ",
+          "start": 66.965,
+          "end": 66.965
+        },
+        {
+          "word": "your ",
+          "start": 67.045,
+          "end": 67.045
+        }
+      ],
+      "metadata": {
+        "response_id": 14
+      }
+    },
+    {
+      "role": "tool_call_result",
+      "tool_call_id": "tool_call_4dcb0a",
+      "successful": true,
+      "content": "{\"available\":true,\"timezone\":\"America/Los_Angeles\",\"timezone_label\":\"Pacific Time\",\"slots\":[{\"starts_at\":\"2026-11-20T21:00:00.000Z\",\"local\":\"Fri, Nov 20, 2026, 1:00 PM\"},{\"starts_at\":\"2026-11-20T21:15:00.000Z\",\"local\":\"Fri, Nov 20, 2026, 1:15 PM\"},{\"starts_at\":\"2026-11-20T21:30:00.000Z\",\"local\":\"Fri, Nov 20, 2026, 1:30 PM\"}]}",
+      "time_sec": 67.649
+    },
+    {
+      "role": "node_transition",
+      "former_node_id": "node-1792684792464",
+      "former_node_name": "Get Available Slots",
+      "new_node_id": "node-1792687749437",
+      "new_node_name": "Offer Available Slots.",
+      "time_sec": 67.739,
+      "transition_type": "normal"
+    },
+    {
+      "role": "agent",
+      "content": "I have Friday, November 20th at 1:00, 1:15, or 1:30 PM Pacific ",
+      "words": [
+        {
+          "word": "I ",
+          "start": 68.49,
+          "end": 68.57
+        },
+        {
+          "word": "have ",
+          "start": 68.57,
+          "end": 68.81
+        },
+        {
+          "word": "Friday, ",
+          "start": 68.81,
+          "end": 69.45
+        },
+        {
+          "word": "November ",
+          "start": 69.60987915039063,
+          "end": 69.93
+        },
+        {
+          "word": "20th ",
+          "start": 69.93,
+          "end": 70.49
+        },
+        {
+          "word": "at ",
+          "start": 70.57000048828125,
+          "end": 70.65
+        },
+        {
+          "word": "1:00, ",
+          "start": 70.73,
+          "end": 71.69
+        },
+        {
+          "word": "1:15, ",
+          "start": 71.69,
+          "end": 72.65
+        },
+        {
+          "word": "or ",
+          "start": 72.86053540039063,
+          "end": 73.05
+        },
+        {
+          "word": "1:30 ",
+          "start": 73.13,
+          "end": 73.61
+        },
+        {
+          "word": "PM ",
+          "start": 73.69000024414062,
+          "end": 73.93
+        },
+        {
+          "word": "Pacific ",
+          "start": 73.93000146484376,
+          "end": 74.41
+        }
+      ],
+      "metadata": {
+        "response_id": 15,
+        "interrupted": true
+      }
+    },
+    {
+      "role": "user",
+      "content": "Friday doesn't work. For me. Do you have any slots on Monday? ",
+      "words": [
+        {
+          "word": "Friday ",
+          "start": 74.298,
+          "end": 74.618
+        },
+        {
+          "word": "doesn't ",
+          "start": 74.618,
+          "end": 74.93799999999999
+        },
+        {
+          "word": "work. ",
+          "start": 74.93799999999999,
+          "end": 75.178005
+        },
+        {
+          "word": "For ",
+          "start": 75.21799999999999,
+          "end": 75.538
+        },
+        {
+          "word": "me. ",
+          "start": 75.538,
+          "end": 75.85799999999999
+        },
+        {
+          "word": "Do ",
+          "start": 75.85799999999999,
+          "end": 76.018
+        },
+        {
+          "word": "you ",
+          "start": 76.018,
+          "end": 76.097996
+        },
+        {
+          "word": "have ",
+          "start": 76.097996,
+          "end": 76.258
+        },
+        {
+          "word": "any ",
+          "start": 76.258,
+          "end": 76.41799499999999
+        },
+        {
+          "word": "slots ",
+          "start": 76.41799499999999,
+          "end": 76.737995
+        },
+        {
+          "word": "on ",
+          "start": 76.737995,
+          "end": 76.898
+        },
+        {
+          "word": "Monday? ",
+          "start": 76.898,
+          "end": 77.13799999999999
+        }
+      ]
+    },
+    {
+      "role": "node_transition",
+      "former_node_id": "node-1792687749437",
+      "former_node_name": "Offer Available Slots.",
+      "new_node_id": "node-1792684792464",
+      "new_node_name": "Get Available Slots",
+      "time_sec": 77.598,
+      "transition_type": "normal"
+    },
+    {
+      "role": "tool_call_invocation",
+      "tool_call_id": "tool_call_6c4138",
+      "name": "get_available_slots",
+      "arguments": "{\"date\":\"2026-11-23\",\"timezone\":\"America/Los_Angeles\"}",
+      "time_sec": 78.241,
+      "type": "custom"
+    },
+    {
+      "role": "user",
+      "content": "Hello? ",
+      "words": [
+        {
+          "word": "Hello? ",
+          "start": 84.20800399999999,
+          "end": 84.448
+        }
+      ]
+    },
+    {
+      "role": "tool_call_result",
+      "tool_call_id": "tool_call_6c4138",
+      "successful": true,
+      "content": "{\"available\":false,\"timezone\":\"America/Los_Angeles\",\"timezone_label\":\"Pacific Time\",\"reason\":\"No consultant is available on that date. Ask the customer for another day and check that date.\"}",
+      "time_sec": 85.468
+    },
+    {
+      "role": "node_transition",
+      "former_node_id": "node-1792684792464",
+      "former_node_name": "Get Available Slots",
+      "new_node_id": "node-1792687749437",
+      "new_node_name": "Offer Available Slots.",
+      "time_sec": 85.558,
+      "transition_type": "normal"
+    },
+    {
+      "role": "agent",
+      "content": "Yes, I’m here. I’m sorry, there don’t seem to be any available consultation slots on Monday, November 23rd. Would another date work for you?",
+      "words": [
+        {
+          "word": "Yes, ",
+          "start": 86.18965454101563,
+          "end": 86.601
+        },
+        {
+          "word": "I’m ",
+          "start": 86.83515649414062,
+          "end": 86.921
+        },
+        {
+          "word": "here.",
+          "start": 86.921,
+          "end": 87.401
+        },
+        {
+          "word": " I’m ",
+          "start": 87.64048950195313,
+          "end": 87.801
+        },
+        {
+          "word": "sorry, ",
+          "start": 87.801,
+          "end": 88.441
+        },
+        {
+          "word": "there ",
+          "start": 88.60201879882813,
+          "end": 88.761
+        },
+        {
+          "word": "don’t ",
+          "start": 88.841,
+          "end": 88.921
+        },
+        {
+          "word": "seem ",
+          "start": 88.921,
+          "end": 89.161
+        },
+        {
+          "word": "to ",
+          "start": 89.241,
+          "end": 89.241
+        },
+        {
+          "word": "be ",
+          "start": 89.321,
+          "end": 89.401
+        },
+        {
+          "word": "any ",
+          "start": 89.481,
+          "end": 89.641
+        },
+        {
+          "word": "available ",
+          "start": 89.641,
+          "end": 90.121
+        },
+        {
+          "word": "consultation ",
+          "start": 90.121,
+          "end": 90.841
+        },
+        {
+          "word": "slots ",
+          "start": 90.921,
+          "end": 91.241
+        },
+        {
+          "word": "on ",
+          "start": 91.32100024414062,
+          "end": 91.481
+        },
+        {
+          "word": "Monday, ",
+          "start": 91.481,
+          "end": 92.041
+        },
+        {
+          "word": "November ",
+          "start": 92.13376904296875,
+          "end": 92.441
+        },
+        {
+          "word": "23rd.",
+          "start": 92.441,
+          "end": 93.241
+        },
+        {
+          "word": " Would ",
+          "start": 93.40123999023437,
+          "end": 93.561
+        },
+        {
+          "word": "another ",
+          "start": 93.641,
+          "end": 93.801
+        },
+        {
+          "word": "date ",
+          "start": 93.881,
+          "end": 94.041
+        },
+        {
+          "word": "work ",
+          "start": 94.041,
+          "end": 94.201
+        },
+        {
+          "word": "for ",
+          "start": 94.281,
+          "end": 94.361
+        },
+        {
+          "word": "you?",
+          "start": 94.441,
+          "end": 94.521
+        }
+      ],
+      "metadata": {
+        "response_id": 19
+      }
+    },
+    {
+      "role": "user",
+      "content": "Yeah. Like, Tuesday? ",
+      "words": [
+        {
+          "word": "Yeah. ",
+          "start": 95.298,
+          "end": 95.85799999999999
+        },
+        {
+          "word": "Like, ",
+          "start": 95.85799999999999,
+          "end": 96.178
+        },
+        {
+          "word": "Tuesday? ",
+          "start": 96.178,
+          "end": 96.49799999999999
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "content": "Or ",
+      "words": [
+        {
+          "word": "Or ",
+          "start": 96.85800499999999,
+          "end": 97.25801
+        }
+      ]
+    },
+    {
+      "role": "node_transition",
+      "former_node_id": "node-1792687749437",
+      "former_node_name": "Offer Available Slots.",
+      "new_node_id": "node-1792684792464",
+      "new_node_name": "Get Available Slots",
+      "time_sec": 97.003,
+      "transition_type": "normal"
+    },
+    {
+      "role": "user",
+      "content": "Wednesday or ",
+      "words": [
+        {
+          "word": "Wednesday ",
+          "start": 97.25801,
+          "end": 97.658
+        },
+        {
+          "word": "or ",
+          "start": 97.658,
+          "end": 97.978
+        }
+      ]
+    },
+    {
+      "role": "tool_call_invocation",
+      "tool_call_id": "tool_call_e9643e",
+      "name": "get_available_slots",
+      "arguments": "{\"date\":\"2026-11-24\",\"timezone\":\"America/Los_Angeles\"}",
+      "time_sec": 97.72,
+      "type": "custom"
+    },
+    {
+      "role": "user",
+      "content": "any other day in that week? ",
+      "words": [
+        {
+          "word": "any ",
+          "start": 97.978,
+          "end": 98.21800599999999
+        },
+        {
+          "word": "other ",
+          "start": 98.21800599999999,
+          "end": 98.538006
+        },
+        {
+          "word": "day ",
+          "start": 98.538006,
+          "end": 98.698
+        },
+        {
+          "word": "in ",
+          "start": 98.698,
+          "end": 98.85800499999999
+        },
+        {
+          "word": "that ",
+          "start": 98.85800499999999,
+          "end": 99.018
+        },
+        {
+          "word": "week? ",
+          "start": 99.018,
+          "end": 99.178005
+        }
+      ]
+    },
+    {
+      "role": "agent",
+      "content": "I’ll check availability ",
+      "words": [
+        {
+          "word": "I’ll ",
+          "start": 100.360794921875,
+          "end": 100.521
+        },
+        {
+          "word": "check ",
+          "start": 100.601,
+          "end": 100.761
+        },
+        {
+          "word": "availability ",
+          "start": 100.761,
+          "end": 101.481
+        }
+      ],
+      "metadata": {
+        "response_id": 21
+      }
+    },
+    {
+      "role": "tool_call_result",
+      "tool_call_id": "tool_call_e9643e",
+      "successful": true,
+      "content": "{\"available\":false,\"timezone\":\"America/Los_Angeles\",\"timezone_label\":\"Pacific Time\",\"reason\":\"No consultant is available on that date. Ask the customer for another day and check that date.\"}",
+      "time_sec": 101.55
+    },
+    {
+      "role": "node_transition",
+      "former_node_id": "node-1792684792464",
+      "former_node_name": "Get Available Slots",
+      "new_node_id": "node-1792687749437",
+      "new_node_name": "Offer Available Slots.",
+      "time_sec": 101.641,
+      "transition_type": "normal"
+    },
+    {
+      "role": "agent",
+      "content": "I’m sorry, there don’t seem to be any available consultation slots on ",
+      "words": [
+        {
+          "word": "I’m ",
+          "start": 102.55614526367188,
+          "end": 102.726
+        },
+        {
+          "word": "sorry, ",
+          "start": 102.726,
+          "end": 103.446
+        },
+        {
+          "word": "there ",
+          "start": 103.60838671875,
+          "end": 103.686
+        },
+        {
+          "word": "don’t ",
+          "start": 103.766,
+          "end": 103.926
+        },
+        {
+          "word": "seem ",
+          "start": 103.926,
+          "end": 104.166
+        },
+        {
+          "word": "to ",
+          "start": 104.246,
+          "end": 104.246
+        },
+        {
+          "word": "be ",
+          "start": 104.326,
+          "end": 104.406
+        },
+        {
+          "word": "any ",
+          "start": 104.48600439453125,
+          "end": 104.726
+        },
+        {
+          "word": "available ",
+          "start": 104.726,
+          "end": 105.206
+        },
+        {
+          "word": "consultation ",
+          "start": 105.28600024414062,
+          "end": 105.926
+        },
+        {
+          "word": "slots ",
+          "start": 105.926,
+          "end": 106.406
+        },
+        {
+          "word": "on ",
+          "start": 106.486,
+          "end": 106.566
+        }
+      ],
+      "metadata": {
+        "response_id": 22
+      }
+    },
+    {
+      "role": "user",
+      "content": "Yeah. ",
+      "words": [
+        {
+          "word": "Yeah. ",
+          "start": 106.85799999999999,
+          "end": 107.178
+        }
+      ]
+    },
+    {
+      "role": "agent",
+      "content": "Tuesday, November 24th. Would another date work for you?",
+      "words": [
+        {
+          "word": "Tuesday, ",
+          "start": 106.56600048828125,
+          "end": 107.366
+        },
+        {
+          "word": "November ",
+          "start": 107.4460029296875,
+          "end": 107.846
+        },
+        {
+          "word": "24th.",
+          "start": 107.846,
+          "end": 108.566
+        },
+        {
+          "word": " Would ",
+          "start": 108.78234033203125,
+          "end": 108.966
+        },
+        {
+          "word": "another ",
+          "start": 109.046,
+          "end": 109.206
+        },
+        {
+          "word": "date ",
+          "start": 109.206,
+          "end": 109.446
+        },
+        {
+          "word": "work ",
+          "start": 109.526,
+          "end": 109.606
+        },
+        {
+          "word": "for ",
+          "start": 109.686,
+          "end": 109.766
+        },
+        {
+          "word": "you?",
+          "start": 109.766,
+          "end": 109.926
+        }
+      ],
+      "metadata": {
+        "response_id": 22
+      }
+    },
+    {
+      "role": "user",
+      "content": "Yeah. ",
+      "words": [
+        {
+          "word": "Yeah. ",
+          "start": 112.908,
+          "end": 113.228
+        }
+      ]
+    },
+    {
+      "role": "agent",
+      "content": "Which other date would work best for you?",
+      "words": [
+        {
+          "word": "Which ",
+          "start": 114.47244262695312,
+          "end": 114.791
+        },
+        {
+          "word": "other ",
+          "start": 114.871,
+          "end": 114.951
+        },
+        {
+          "word": "date ",
+          "start": 115.031,
+          "end": 115.191
+        },
+        {
+          "word": "would ",
+          "start": 115.191,
+          "end": 115.351
+        },
+        {
+          "word": "work ",
+          "start": 115.431,
+          "end": 115.511
+        },
+        {
+          "word": "best ",
+          "start": 115.591,
+          "end": 115.831
+        },
+        {
+          "word": "for ",
+          "start": 115.911,
+          "end": 115.911
+        },
+        {
+          "word": "you?",
+          "start": 115.911,
+          "end": 116.231
+        }
+      ],
+      "metadata": {
+        "response_id": 23
+      }
+    },
+    {
+      "role": "user",
+      "content": "Yeah. Yeah. C Wednesday. Lubin two, Wednesday. ",
+      "words": [
+        {
+          "word": "Yeah. ",
+          "start": 120.60799999999999,
+          "end": 121.008
+        },
+        {
+          "word": "Yeah. ",
+          "start": 122.368,
+          "end": 122.767994
+        },
+        {
+          "word": "C ",
+          "start": 122.767994,
+          "end": 123.08798999999999
+        },
+        {
+          "word": "Wednesday. ",
+          "start": 123.08798999999999,
+          "end": 123.568
+        },
+        {
+          "word": "Lubin ",
+          "start": 123.878,
+          "end": 124.27799999999999
+        },
+        {
+          "word": "two, ",
+          "start": 124.27799999999999,
+          "end": 124.518
+        },
+        {
+          "word": "Wednesday. ",
+          "start": 124.518,
+          "end": 124.838
+        }
+      ]
+    },
+    {
+      "role": "node_transition",
+      "former_node_id": "node-1792687749437",
+      "former_node_name": "Offer Available Slots.",
+      "new_node_id": "node-1792684792464",
+      "new_node_name": "Get Available Slots",
+      "time_sec": 126.329,
+      "transition_type": "normal"
+    },
+    {
+      "role": "tool_call_invocation",
+      "tool_call_id": "tool_call_76637c",
+      "name": "get_available_slots",
+      "arguments": "{\"date\":\"2026-11-25\",\"timezone\":\"America/Los_Angeles\"}",
+      "time_sec": 127.006,
+      "type": "custom"
+    },
+    {
+      "role": "tool_call_result",
+      "tool_call_id": "tool_call_76637c",
+      "successful": true,
+      "content": "{\"available\":false,\"timezone\":\"America/Los_Angeles\",\"timezone_label\":\"Pacific Time\",\"reason\":\"No consultant is available on that date. Ask the customer for another day and check that date.\"}",
+      "time_sec": 132.078
+    },
+    {
+      "role": "node_transition",
+      "former_node_id": "node-1792684792464",
+      "former_node_name": "Get Available Slots",
+      "new_node_id": "node-1792687749437",
+      "new_node_name": "Offer Available Slots.",
+      "time_sec": 132.169,
+      "transition_type": "normal"
+    },
+    {
+      "role": "agent",
+      "content": "I’m sorry, there don’t seem to be any available consultation slots on ",
+      "words": [
+        {
+          "word": "I’m ",
+          "start": 132.89609765625,
+          "end": 133.06
+        },
+        {
+          "word": "sorry, ",
+          "start": 133.14,
+          "end": 133.7
+        },
+        {
+          "word": "there ",
+          "start": 133.8312561035156,
+          "end": 134.02
+        },
+        {
+          "word": "don’t ",
+          "start": 134.1,
+          "end": 134.26
+        },
+        {
+          "word": "seem ",
+          "start": 134.34,
+          "end": 134.42
+        },
+        {
+          "word": "to ",
+          "start": 134.5,
+          "end": 134.5
+        },
+        {
+          "word": "be ",
+          "start": 134.5,
+          "end": 134.66
+        },
+        {
+          "word": "any ",
+          "start": 134.740076171875,
+          "end": 134.98
+        },
+        {
+          "word": "available ",
+          "start": 134.98,
+          "end": 135.46
+        },
+        {
+          "word": "consultation ",
+          "start": 135.46,
+          "end": 136.18
+        },
+        {
+          "word": "slots ",
+          "start": 136.26,
+          "end": 136.66
+        },
+        {
+          "word": "on ",
+          "start": 136.74,
+          "end": 136.82
+        }
+      ],
+      "metadata": {
+        "response_id": 28,
+        "interrupted": true
+      }
+    },
+    {
+      "role": "user",
+      "content": "Then when is the next available? When is the next available? You find the next available. Right? Whenever it is there, Don't ask me the day. ",
+      "words": [
+        {
+          "word": "Then ",
+          "start": 136.778,
+          "end": 137.01801
+        },
+        {
+          "word": "when ",
+          "start": 137.01801,
+          "end": 137.25799999999998
+        },
+        {
+          "word": "is ",
+          "start": 137.25799999999998,
+          "end": 137.418
+        },
+        {
+          "word": "the ",
+          "start": 137.418,
+          "end": 137.578
+        },
+        {
+          "word": "next ",
+          "start": 137.578,
+          "end": 137.65801
+        },
+        {
+          "word": "available? ",
+          "start": 137.728,
+          "end": 138.608
+        },
+        {
+          "word": "When ",
+          "start": 138.608,
+          "end": 138.84799999999998
+        },
+        {
+          "word": "is ",
+          "start": 138.84799999999998,
+          "end": 139.00799999999998
+        },
+        {
+          "word": "the ",
+          "start": 139.00799999999998,
+          "end": 139.088
+        },
+        {
+          "word": "next ",
+          "start": 139.088,
+          "end": 139.328
+        },
+        {
+          "word": "available? ",
+          "start": 139.328,
+          "end": 139.808
+        },
+        {
+          "word": "You ",
+          "start": 139.808,
+          "end": 139.888
+        },
+        {
+          "word": "find ",
+          "start": 139.888,
+          "end": 140.128
+        },
+        {
+          "word": "the ",
+          "start": 140.128,
+          "end": 140.208
+        },
+        {
+          "word": "next ",
+          "start": 140.208,
+          "end": 140.448
+        },
+        {
+          "word": "available. ",
+          "start": 140.448,
+          "end": 141.00799999999998
+        },
+        {
+          "word": "Right? ",
+          "start": 141.00799999999998,
+          "end": 141.408
+        },
+        {
+          "word": "Whenever ",
+          "start": 141.408,
+          "end": 141.728
+        },
+        {
+          "word": "it ",
+          "start": 141.728,
+          "end": 141.968
+        },
+        {
+          "word": "is ",
+          "start": 141.968,
+          "end": 142.048
+        },
+        {
+          "word": "there, ",
+          "start": 142.048,
+          "end": 142.28799999999998
+        },
+        {
+          "word": "Don't ",
+          "start": 142.428,
+          "end": 142.748
+        },
+        {
+          "word": "ask ",
+          "start": 142.748,
+          "end": 143.148
+        },
+        {
+          "word": "me ",
+          "start": 143.148,
+          "end": 143.308
+        },
+        {
+          "word": "the ",
+          "start": 143.308,
+          "end": 143.46799
+        },
+        {
+          "word": "day. ",
+          "start": 143.46799,
+          "end": 143.628
+        }
+      ]
+    },
+    {
+      "role": "node_transition",
+      "former_node_id": "node-1792687749437",
+      "former_node_name": "Offer Available Slots.",
+      "new_node_id": "node-1792684792464",
+      "new_node_name": "Get Available Slots",
+      "time_sec": 144.191,
+      "transition_type": "normal"
+    },
+    {
+      "role": "tool_call_invocation",
+      "tool_call_id": "tool_call_c4dfa4",
+      "name": "get_available_slots",
+      "arguments": "{\"timezone\":\"America/Los_Angeles\"}",
+      "time_sec": 144.873,
+      "type": "custom"
+    },
+    {
+      "role": "tool_call_result",
+      "tool_call_id": "tool_call_c4dfa4",
+      "successful": true,
+      "content": "{\"available\":true,\"timezone\":\"America/Los_Angeles\",\"timezone_label\":\"Pacific Time\",\"slots\":[{\"starts_at\":\"2026-11-20T21:00:00.000Z\",\"local\":\"Fri, Nov 20, 2026, 1:00 PM\"},{\"starts_at\":\"2026-11-20T21:15:00.000Z\",\"local\":\"Fri, Nov 20, 2026, 1:15 PM\"},{\"starts_at\":\"2026-11-20T21:30:00.000Z\",\"local\":\"Fri, Nov 20, 2026, 1:30 PM\"}]}",
+      "time_sec": 152.564
+    },
+    {
+      "role": "node_transition",
+      "former_node_id": "node-1792684792464",
+      "former_node_name": "Get Available Slots",
+      "new_node_id": "node-1792687749437",
+      "new_node_name": "Offer Available Slots.",
+      "time_sec": 152.655,
+      "transition_type": "normal"
+    },
+    {
+      "role": "agent",
+      "content": "The soonest available times are Friday, November 20th at 1:00, ",
+      "words": [
+        {
+          "word": "The ",
+          "start": 153.54975048828126,
+          "end": 153.63
+        },
+        {
+          "word": "soonest ",
+          "start": 153.71,
+          "end": 154.11
+        },
+        {
+          "word": "available ",
+          "start": 154.11,
+          "end": 154.51
+        },
+        {
+          "word": "times ",
+          "start": 154.51000024414063,
+          "end": 155.07
+        },
+        {
+          "word": "are ",
+          "start": 155.1500009765625,
+          "end": 155.23
+        },
+        {
+          "word": "Friday, ",
+          "start": 155.23,
+          "end": 156.03
+        },
+        {
+          "word": "November ",
+          "start": 156.189345703125,
+          "end": 156.51
+        },
+        {
+          "word": "20th ",
+          "start": 156.51,
+          "end": 157.15
+        },
+        {
+          "word": "at ",
+          "start": 157.15094067382813,
+          "end": 157.47
+        },
+        {
+          "word": "1:00, ",
+          "start": 157.55,
+          "end": 158.47
+        }
+      ],
+      "metadata": {
+        "response_id": 36,
+        "interrupted": true
+      }
+    },
+    {
+      "role": "user",
+      "content": "Yeah. Then book it for one o'clock. ",
+      "words": [
+        {
+          "word": "Yeah. ",
+          "start": 158.558,
+          "end": 158.95801
+        },
+        {
+          "word": "Then ",
+          "start": 159.28799999999998,
+          "end": 159.68798999999999
+        },
+        {
+          "word": "book ",
+          "start": 159.68798999999999,
+          "end": 160.00799999999998
+        },
+        {
+          "word": "it ",
+          "start": 160.00799999999998,
+          "end": 160.168
+        },
+        {
+          "word": "for ",
+          "start": 160.168,
+          "end": 160.32799
+        },
+        {
+          "word": "one ",
+          "start": 160.32799,
+          "end": 160.488
+        },
+        {
+          "word": "o'clock. ",
+          "start": 160.488,
+          "end": 160.888
+        }
+      ]
+    },
+    {
+      "role": "node_transition",
+      "former_node_id": "node-1792687749437",
+      "former_node_name": "Offer Available Slots.",
+      "new_node_id": "node-1792688023469",
+      "new_node_name": "Confirm Consultation",
+      "time_sec": 161.322,
+      "transition_type": "normal"
+    },
+    {
+      "role": "agent",
+      "content": "For your Nepal consultation on Friday, November 20th at 1 PM Pacific Time, would you prefer phone, WhatsApp, or video?",
+      "words": [
+        {
+          "word": "For ",
+          "start": 162.21457934570313,
+          "end": 162.383
+        },
+        {
+          "word": "your ",
+          "start": 162.463,
+          "end": 162.543
+        },
+        {
+          "word": "Nepal ",
+          "start": 162.623,
+          "end": 162.943
+        },
+        {
+          "word": "consultation ",
+          "start": 162.943,
+          "end": 163.743
+        },
+        {
+          "word": "on ",
+          "start": 163.743,
+          "end": 163.903
+        },
+        {
+          "word": "Friday, ",
+          "start": 163.983,
+          "end": 164.623
+        },
+        {
+          "word": "November ",
+          "start": 164.70291162109376,
+          "end": 165.103
+        },
+        {
+          "word": "20th ",
+          "start": 165.103,
+          "end": 165.663
+        },
+        {
+          "word": "at ",
+          "start": 165.74417602539063,
+          "end": 165.903
+        },
+        {
+          "word": "1 ",
+          "start": 165.983,
+          "end": 166.143
+        },
+        {
+          "word": "PM ",
+          "start": 166.143,
+          "end": 166.463
+        },
+        {
+          "word": "Pacific ",
+          "start": 166.543,
+          "end": 166.943
+        },
+        {
+          "word": "Time, ",
+          "start": 166.943,
+          "end": 167.343
+        },
+        {
+          "word": "would ",
+          "start": 167.59393627929688,
+          "end": 167.903
+        },
+        {
+          "word": "you ",
+          "start": 167.983,
+          "end": 167.983
+        },
+        {
+          "word": "prefer ",
+          "start": 168.063,
+          "end": 168.383
+        },
+        {
+          "word": "phone, ",
+          "start": 168.383,
+          "end": 168.943
+        },
+        {
+          "word": "WhatsApp, ",
+          "start": 169.07810864257812,
+          "end": 169.903
+        },
+        {
+          "word": "or ",
+          "start": 170.06291381835936,
+          "end": 170.143
+        },
+        {
+          "word": "video?",
+          "start": 170.143,
+          "end": 170.623
+        }
+      ],
+      "metadata": {
+        "response_id": 37
+      }
+    },
+    {
+      "role": "user",
+      "content": "Yeah. I prefer phone. ",
+      "words": [
+        {
+          "word": "Yeah. ",
+          "start": 171.84799999999998,
+          "end": 172.32799
+        },
+        {
+          "word": "I ",
+          "start": 172.32799,
+          "end": 172.56799999999998
+        },
+        {
+          "word": "prefer ",
+          "start": 172.56799999999998,
+          "end": 172.888
+        },
+        {
+          "word": "phone. ",
+          "start": 172.888,
+          "end": 173.208
+        }
+      ]
+    },
+    {
+      "role": "agent",
+      "content": "Just to confirm, should I book your Nepal consultation for Friday, November 20th at 1 PM Pacific Time by phone?",
+      "words": [
+        {
+          "word": "Just ",
+          "start": 174.2992431640625,
+          "end": 174.54
+        },
+        {
+          "word": "to ",
+          "start": 174.62,
+          "end": 174.62
+        },
+        {
+          "word": "confirm, ",
+          "start": 174.62,
+          "end": 175.34
+        },
+        {
+          "word": "should ",
+          "start": 175.5000400390625,
+          "end": 175.66
+        },
+        {
+          "word": "I ",
+          "start": 175.74,
+          "end": 175.74
+        },
+        {
+          "word": "book ",
+          "start": 175.74000024414062,
+          "end": 175.98
+        },
+        {
+          "word": "your ",
+          "start": 176.06,
+          "end": 176.06
+        },
+        {
+          "word": "Nepal ",
+          "start": 176.1400009765625,
+          "end": 176.46
+        },
+        {
+          "word": "consultation ",
+          "start": 176.46000024414062,
+          "end": 177.26
+        },
+        {
+          "word": "for ",
+          "start": 177.34,
+          "end": 177.5
+        },
+        {
+          "word": "Friday, ",
+          "start": 177.5,
+          "end": 178.3
+        },
+        {
+          "word": "November ",
+          "start": 178.38027880859374,
+          "end": 178.78
+        },
+        {
+          "word": "20th ",
+          "start": 178.78000048828125,
+          "end": 179.42
+        },
+        {
+          "word": "at ",
+          "start": 179.50011450195314,
+          "end": 179.66
+        },
+        {
+          "word": "1 ",
+          "start": 179.74000048828125,
+          "end": 179.9
+        },
+        {
+          "word": "PM ",
+          "start": 179.9000002441406,
+          "end": 180.22
+        },
+        {
+          "word": "Pacific ",
+          "start": 180.3,
+          "end": 180.7
+        },
+        {
+          "word": "Time ",
+          "start": 180.7,
+          "end": 180.94
+        },
+        {
+          "word": "by ",
+          "start": 181.02,
+          "end": 181.1
+        },
+        {
+          "word": "phone?",
+          "start": 181.18,
+          "end": 181.42
+        }
+      ],
+      "metadata": {
+        "response_id": 38
+      }
+    },
+    {
+      "role": "user",
+      "content": "Yeah. Do that. ",
+      "words": [
+        {
+          "word": "Yeah. ",
+          "start": 182.428,
+          "end": 182.74799
+        },
+        {
+          "word": "Do ",
+          "start": 182.74799,
+          "end": 183.06799999999998
+        },
+        {
+          "word": "that. ",
+          "start": 183.06799999999998,
+          "end": 183.22799
+        }
+      ]
+    },
+    {
+      "role": "node_transition",
+      "former_node_id": "node-1792688023469",
+      "former_node_name": "Confirm Consultation",
+      "new_node_id": "node-1792687514318",
+      "new_node_name": "Book Consultation",
+      "time_sec": 183.756,
+      "transition_type": "normal"
+    },
+    {
+      "role": "agent",
+      "content": "Okay, ",
+      "words": [
+        {
+          "word": "Okay, ",
+          "start": 184.30057202148438,
+          "end": 184.779
+        }
+      ],
+      "metadata": {
+        "response_id": 40
+      }
+    },
+    {
+      "role": "tool_call_invocation",
+      "tool_call_id": "tool_call_d3a923",
+      "name": "book_consultation",
+      "arguments": "{\"confirmed\":true,\"confirmed_destination\":\"Nepal\",\"group_size\":\"Individual\",\"meeting_type\":\"phone\",\"preferred_trek\":\"Everest region\",\"special_requirements\":\"Food experiences\",\"starts_at\":\"2026-11-20T21:00:00.000Z\",\"timezone\":\"America/Los_Angeles\",\"travel_timing\":\"2027\",\"trip_duration\":\"16+ days\"}",
+      "time_sec": 184.616,
+      "type": "custom"
+    },
+    {
+      "role": "agent",
+      "content": "I’m booking that now.",
+      "words": [
+        {
+          "word": "I’m ",
+          "start": 184.98387670898438,
+          "end": 185.099
+        },
+        {
+          "word": "booking ",
+          "start": 185.099,
+          "end": 185.419
+        },
+        {
+          "word": "that ",
+          "start": 185.499,
+          "end": 185.579
+        },
+        {
+          "word": "now.",
+          "start": 185.579,
+          "end": 186.059
+        }
+      ],
+      "metadata": {
+        "response_id": 40
+      }
+    },
+    {
+      "role": "user",
+      "content": "Done. ",
+      "words": [
+        {
+          "word": "Done. ",
+          "start": 196.628,
+          "end": 196.868
+        }
+      ]
+    },
+    {
+      "role": "agent",
+      "content": "I’m just waiting for the confirmation.",
+      "words": [
+        {
+          "word": "I’m ",
+          "start": 197.821439453125,
+          "end": 197.982
+        },
+        {
+          "word": "just ",
+          "start": 198.062,
+          "end": 198.142
+        },
+        {
+          "word": "waiting ",
+          "start": 198.222,
+          "end": 198.462
+        },
+        {
+          "word": "for ",
+          "start": 198.542,
+          "end": 198.542
+        },
+        {
+          "word": "the ",
+          "start": 198.622,
+          "end": 198.622
+        },
+        {
+          "word": "confirmation.",
+          "start": 198.622,
+          "end": 199.502
+        }
+      ],
+      "metadata": {
+        "response_id": 41
+      }
+    },
+    {
+      "role": "tool_call_result",
+      "tool_call_id": "tool_call_d3a923",
+      "successful": true,
+      "content": "{\"booked\":true,\"appointment_id\":\"a6b48bc8-700e-49aa-9b1d-d445c6f13b2f\",\"consultant\":\"David Urmann\"}",
+      "time_sec": 207.312
+    },
+    {
+      "role": "node_transition",
+      "former_node_id": "node-1792687514318",
+      "former_node_name": "Book Consultation",
+      "new_node_id": "node-1792688259042",
+      "new_node_name": "Booking Confirmed",
+      "time_sec": 207.404,
+      "transition_type": "normal"
+    },
+    {
+      "role": "agent",
+      "content": "Your consultation is booked for Friday, November 20th at 1 PM Pacific Time by phone. David Urmann will be your consultant. Thanks for ",
+      "words": [
+        {
+          "word": "Your ",
+          "start": 208.18387768554686,
+          "end": 208.344
+        },
+        {
+          "word": "consultation ",
+          "start": 208.344,
+          "end": 209.064
+        },
+        {
+          "word": "is ",
+          "start": 209.064,
+          "end": 209.224
+        },
+        {
+          "word": "booked ",
+          "start": 209.304,
+          "end": 209.464
+        },
+        {
+          "word": "for ",
+          "start": 209.544,
+          "end": 209.704
+        },
+        {
+          "word": "Friday, ",
+          "start": 209.704,
+          "end": 210.344
+        },
+        {
+          "word": "November ",
+          "start": 210.50405004882813,
+          "end": 210.904
+        },
+        {
+          "word": "20th ",
+          "start": 210.904,
+          "end": 211.384
+        },
+        {
+          "word": "at ",
+          "start": 211.51348510742187,
+          "end": 211.624
+        },
+        {
+          "word": "1 ",
+          "start": 211.62400024414063,
+          "end": 211.944
+        },
+        {
+          "word": "PM ",
+          "start": 212.024,
+          "end": 212.344
+        },
+        {
+          "word": "Pacific ",
+          "start": 212.344,
+          "end": 212.824
+        },
+        {
+          "word": "Time ",
+          "start": 212.904,
+          "end": 213.144
+        },
+        {
+          "word": "by ",
+          "start": 213.224,
+          "end": 213.224
+        },
+        {
+          "word": "phone.",
+          "start": 213.224,
+          "end": 213.704
+        },
+        {
+          "word": " David ",
+          "start": 213.91693310546876,
+          "end": 214.264
+        },
+        {
+          "word": "Urmann ",
+          "start": 214.2640036621094,
+          "end": 214.664
+        },
+        {
+          "word": "will ",
+          "start": 214.744,
+          "end": 214.744
+        },
+        {
+          "word": "be ",
+          "start": 214.824,
+          "end": 214.904
+        },
+        {
+          "word": "your ",
+          "start": 214.984,
+          "end": 214.984
+        },
+        {
+          "word": "consultant.",
+          "start": 214.984,
+          "end": 215.784
+        },
+        {
+          "word": " Thanks ",
+          "start": 216.07396801757812,
+          "end": 216.344
+        },
+        {
+          "word": "for ",
+          "start": 216.424,
+          "end": 216.424
+        }
+      ],
+      "metadata": {
+        "response_id": 42
+      }
+    },
+    {
+      "role": "user",
+      "content": "Awesome. ",
+      "words": [
+        {
+          "word": "Awesome. ",
+          "start": 216.678,
+          "end": 217.078
+        }
+      ]
+    },
+    {
+      "role": "agent",
+      "content": "booking—have a great ",
+      "words": [
+        {
+          "word": "booking—have ",
+          "start": 216.504,
+          "end": 217.144
+        },
+        {
+          "word": "a ",
+          "start": 217.224,
+          "end": 217.224
+        },
+        {
+          "word": "great ",
+          "start": 217.304,
+          "end": 217.464
+        }
+      ],
+      "metadata": {
+        "response_id": 42
+      }
+    },
+    {
+      "role": "node_transition",
+      "former_node_id": "node-1792688259042",
+      "former_node_name": "Booking Confirmed",
+      "new_node_id": "end-call-node-1791903579650",
+      "new_node_name": "End Call",
+      "time_sec": 217.7,
+      "transition_type": "normal"
+    },
+    {
+      "role": "tool_call_invocation",
+      "tool_call_id": "end_call_1fb907",
+      "name": "End Call",
+      "arguments": "{}",
+      "time_sec": 217.701,
+      "type": "end_call"
+    }
+  ],
+  "recording_url": "https://dxc03zgurdly9.cloudfront.net/011d4d5ff2d96bb00b57221c6cbf3f0f006676a20c752f3ae483644fa257cefa/recording.wav",
+  "recording_multi_channel_url": "https://dxc03zgurdly9.cloudfront.net/011d4d5ff2d96bb00b57221c6cbf3f0f006676a20c752f3ae483644fa257cefa/recording_multichannel.wav",
+  "public_log_url": "https://dxc03zgurdly9.cloudfront.net/011d4d5ff2d96bb00b57221c6cbf3f0f006676a20c752f3ae483644fa257cefa/public.log",
+  "disconnection_reason": "agent_hangup",
+  "latency": {
+    "llm": {
+      "max": 739,
+      "min": 0,
+      "num": 23,
+      "p50": 564,
+      "p90": 693,
+      "p95": 721.0999999999999,
+      "p99": 735.7,
+      "sum": 12867,
+      "values": [
+        0,
+        655,
+        641,
+        520,
+        498,
+        557,
+        621,
+        467,
+        548,
+        456,
+        585,
+        671,
+        459,
+        739,
+        724,
+        695,
+        534,
+        650,
+        685,
+        510,
+        583,
+        505,
+        564
+      ]
+    },
+    "e2e": {
+      "max": 1922,
+      "min": 697,
+      "num": 14,
+      "p50": 997.5,
+      "p90": 1187.4,
+      "p95": 1462.4499999999998,
+      "p99": 1830.0899999999995,
+      "sum": 14146.009033203125,
+      "values": [
+        1023,
+        717,
+        830.0009765625,
+        1922,
+        932.0029296875,
+        733,
+        697,
+        1054,
+        1062.9951171875,
+        1123,
+        1215,
+        972,
+        1031.010009765625,
+        834
+      ]
+    },
+    "tts": {
+      "max": 126,
+      "min": 56,
+      "num": 22,
+      "p50": 78.5,
+      "p90": 104.80000000000001,
+      "p95": 123.04999999999998,
+      "p99": 125.58,
+      "sum": 1781,
+      "values": [
+        88,
+        89,
+        56,
+        67,
+        56,
+        60,
+        57,
+        89,
+        65,
+        126,
+        102,
+        63,
+        93,
+        81,
+        57,
+        76,
+        124,
+        103,
+        105,
+        69,
+        60,
+        95
+      ]
+    },
+    "asr": {
+      "max": 352,
+      "min": 0,
+      "num": 29,
+      "p50": 162,
+      "p90": 318,
+      "p95": 337.59999999999997,
+      "p99": 350.88,
+      "sum": 5476,
+      "values": [
+        81,
+        0,
+        162,
+        149,
+        142,
+        81,
+        161,
+        17,
+        140,
+        115,
+        279,
+        243,
+        322,
+        202,
+        137,
+        262,
+        88,
+        307,
+        348,
+        152,
+        317,
+        258,
+        175,
+        90,
+        352,
+        162,
+        239,
+        237,
+        258
+      ]
+    }
+  },
+  "metadata": {
+    "callRecordId": "f13d829a-6d99-4847-82d6-0d5e39f95f46",
+    "leadId": "98f0587d-9e2a-450b-b8cb-e7b913dd1409"
+  },
+  "call_cost": {
+    "combined_cost": 139.4666812,
+    "product_costs": [
+      {
+        "cost": 19.9833406,
+        "product": "retell_voice_engine",
+        "unit_price": 0.0916667
+      },
+      {
+        "cost": 5.45,
+        "product": "platform_tts",
+        "unit_price": 0.025
+      },
+      {
+        "cost": 23.2533406,
+        "product": "gpt_5_6_terra",
+        "unit_price": 0.1066667
+      },
+      {
+        "cost": 34.2,
+        "product": "llm_token_surcharge",
+        "unit_price": 0.1
+      },
+      {
+        "cost": 54.5,
+        "product": "india_twilio_telephony",
+        "unit_price": 0.25
+      },
+      {
+        "cost": 2.08,
+        "product": "gpt_5_6_terra_text_testing",
+        "unit_price": 2.08
+      }
+    ],
+    "total_duration_seconds": 218,
+    "total_duration_unit_price": 0.6302141
+  },
+  "call_analysis": {
+    "call_successful": true,
+    "call_summary": "The caller discussed a 2027 Nepal/Everest-region trip with shorter hikes, an approximately $10,000 budget, and a preference for food experiences. After checking several unavailable dates, the agent booked a phone consultation with David Urmann for Friday, November 20, 2026 at 1:00 PM Pacific Time.",
+    "custom_analysis_data": {},
+    "in_voicemail": false,
+    "user_sentiment": "Positive"
+  },
+  "data_storage_setting": "everything",
+  "opt_in_signed_url": false,
+  "llm_token_usage": {
+    "values": [
+      9886,
+      9898,
+      10172,
+      10179,
+      9946,
+      9970,
+      10006,
+      8274,
+      8245,
+      8283,
+      9168,
+      7979,
+      11178,
+      8223,
+      11564,
+      8375,
+      11487,
+      11531,
+      11476,
+      11649,
+      12118,
+      10194,
+      9999,
+      9067,
+      9170,
+      9191,
+      9592
+    ],
+    "average": 9882.222222222223,
+    "num_requests": 27
+  },
+  "tool_calls": [
+    {
+      "latency_ms": 5602.000000000004,
+      "name": "get_available_slots",
+      "start_time_sec": 62.047,
+      "success": true,
+      "tool_call_id": "tool_call_4dcb0a",
+      "type": "custom"
+    },
+    {
+      "latency_ms": 7227.000000000004,
+      "name": "get_available_slots",
+      "start_time_sec": 78.241,
+      "success": true,
+      "tool_call_id": "tool_call_6c4138",
+      "type": "custom"
+    },
+    {
+      "latency_ms": 3829.999999999998,
+      "name": "get_available_slots",
+      "start_time_sec": 97.72,
+      "success": true,
+      "tool_call_id": "tool_call_e9643e",
+      "type": "custom"
+    },
+    {
+      "latency_ms": 5072.000000000003,
+      "name": "get_available_slots",
+      "start_time_sec": 127.006,
+      "success": true,
+      "tool_call_id": "tool_call_76637c",
+      "type": "custom"
+    },
+    {
+      "latency_ms": 7691.000000000003,
+      "name": "get_available_slots",
+      "start_time_sec": 144.873,
+      "success": true,
+      "tool_call_id": "tool_call_c4dfa4",
+      "type": "custom"
+    },
+    {
+      "latency_ms": 22695.999999999996,
+      "name": "book_consultation",
+      "start_time_sec": 184.616,
+      "success": true,
+      "tool_call_id": "tool_call_d3a923",
+      "type": "custom"
+    },
+    {
+      "name": "End Call",
+      "start_time_sec": 217.701,
+      "tool_call_id": "end_call_1fb907",
+      "type": "end_call"
+    }
+  ],
+  "from_number": "+19789538571",
+  "to_number": "+916291764011",
+  "direction": "outbound",
+  "telephony_identifier": {
+    "twilio_call_sid": "CA56489c5d8b2bd95199918b5e9afba482"
+  },
+  "pcap_url": "https://dxc03zgurdly9.cloudfront.net/011d4d5ff2d96bb00b57221c6cbf3f0f006676a20c752f3ae483644fa257cefa/call_19d4420bf4b5d66c166c079d3d1.pcap"
+}

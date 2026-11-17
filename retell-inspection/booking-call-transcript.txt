@@ -1,0 +1,66 @@
+Agent: Hi Nishka, 
+User: Hello? 
+Agent: this is a travel consultant calling from himalayanwonders.com. I'm calling about your enquiry for Nepal. Is now a good time for a quick conversation about your travel plans?
+User: Yes. It is. 
+User: Yeah. 
+Agent: I 
+Agent: I can see you’re planning a solo Nepal trip in the Everest region, with a few short hikes. Do you have an 
+User: Yeah. 
+Agent: approximate budget 
+User: I am. 
+Agent: Do you have an approximate budget range in mind for the trip?
+User: Yeah. Thirty k dollars. 
+Agent: What would you most like to include besides the short hikes—scenery, local culture, or something 
+User: Adventure. 
+User: Adventure. 
+Agent: Adventure sounds like a great fit. Would you like me to arrange a quick call with a travel consultant to plan the details?
+User: Yeah. 
+Agent: It looks like it’s around 12:46 AM in India right now. Is that correct?
+User: Oh my 
+User: god. My god. Correct. 
+User: Correct. 
+Agent: Which date would work best for your consultation?
+Agent: I have openings on Saturday, November 21 at 2:30 AM, 2:45 AM, or 3 AM India Standard Time. Which works best?
+User: Let me do it any other day other than Saturday? I will be occupied on Saturday. 
+Agent: No problem. Which other date would work best for you?
+User: Monday. 
+User: Monday. 
+Agent: I'm sorry, there don't seem to be any available consultation slots on Monday. Would another date work for you?
+User: Yeah. Another day. Any other day. 
+Agent: Which specific date would work best for you?
+User: What are the available days after Saturday? 
+Agent: I can check a specific date after Saturday, but I don’t have a full list of open days. Would Tuesday, November 24 work?
+User: Yeah. Works for me. 
+Agent: I’ll check availability for Tuesday, November 24.
+User: Hello? 
+Agent: I’m here. I’m checking Tuesday, November 24 now.
+User: Do it quickly. 
+Agent: Sorry for the delay. I don’t have the Tuesday availability result yet, so I can’t confirm a time.
+User: Okay. Do it on Saturday only then. 
+Agent: Saturday has openings at 2:30 AM, 2:45 AM, and 3 AM India Standard Time. Which time works 
+User: Do it 
+User: two forty five. 
+Agent: For Nepal, Saturday, November 21 at 2:45 AM India Standard Time—just to confirm, would you like me to book this consultation for you at that time?
+User: Yes. Yes. Do it. Book it. Book it. Book it. 
+Agent: All right, 
+Agent: I’m booking your consultation for Saturday, November 21 at 2:45 AM India Standard Time now.
+Agent: I’m 
+User: Done. Yes. 
+Agent: I’m sorry—the booking didn’t go through because that consultation type isn’t supported. I can help check another option.
+User: Yeah. Check another option. 
+Agent: We’ll need to try a different consultation option, since the prior booking wasn’t supported. Would you like me to check a different time on Saturday?
+User: Yes. Do that. 
+Agent: The remaining Saturday options are 2:30 AM or 3:00 AM India Standard Time.
+User: Yeah. Three AM. Three AM. 
+Agent: You selected Saturday, November 21 at 3:00 
+User: Yes. I did. 
+User: Yes. 
+Agent: Please confirm: would you like me to 
+User: Yes. 
+Agent: book Saturday, November 
+User: Yes. 
+Agent: I’m 
+User: Yes. 
+Agent: I’m sorry, the booking still needs to be completed, and I can’t confirm it yet.
+User: Okay. Why? 
+Agent: The scheduling system rejected the consultation type, so it didn’t create the appointment. I can’t confirm a booking without a successful system response.

@@ -1,0 +1,51 @@
+Agent: Hi nishka, this is a travel consultant calling from himalayanwonders.com. I'm calling about your enquiry for Nepal. Is now a good time for a quick conversation about your travel plans?
+User: Yes. It is. Yes. 
+Agent: I see you’re considering the Everest region in 2027, with some 
+User: Yep. 
+Agent: shorter hikes.
+User: Correct. 
+User: Correct. 
+Agent: Do you have an approximate budget range in mind for the trip?
+User: Yeah. Like ten k. Dollars. 
+Agent: Is there anything specific you’d really like to include in the trip?
+User: Yeah. I like food if I want food experience. 
+Agent: I’ll note that you’d like food experiences included. Would you like me to arrange a chat with a travel consultant to plan the 
+User: Yeah, please. 
+User: Please do that. 
+Agent: Before I check times, I just need to confirm your local time. Is it about 10:33 PM where you are right now?
+Agent: Before I 
+User: No. 
+Agent: check the available consultation times, I have you in India Standard Time, and it looks like it’s around 12:02 PM where you are. Is that correct?
+User: Yes. Yes. 
+User: Yes. 
+Agent: Which date would work best for your 
+Agent: I have Friday, November 20th at 1:00, 1:15, or 1:30 PM Pacific 
+User: Friday doesn't work. For me. Do you have any slots on Monday? 
+User: Hello? 
+Agent: Yes, I’m here. I’m sorry, there don’t seem to be any available consultation slots on Monday, November 23rd. Would another date work for you?
+User: Yeah. Like, Tuesday? 
+User: Or 
+User: Wednesday or 
+User: any other day in that week? 
+Agent: I’ll check availability 
+Agent: I’m sorry, there don’t seem to be any available consultation slots on 
+User: Yeah. 
+Agent: Tuesday, November 24th. Would another date work for you?
+User: Yeah. 
+Agent: Which other date would work best for you?
+User: Yeah. Yeah. C Wednesday. Lubin two, Wednesday. 
+Agent: I’m sorry, there don’t seem to be any available consultation slots on 
+User: Then when is the next available? When is the next available? You find the next available. Right? Whenever it is there, Don't ask me the day. 
+Agent: The soonest available times are Friday, November 20th at 1:00, 
+User: Yeah. Then book it for one o'clock. 
+Agent: For your Nepal consultation on Friday, November 20th at 1 PM Pacific Time, would you prefer phone, WhatsApp, or video?
+User: Yeah. I prefer phone. 
+Agent: Just to confirm, should I book your Nepal consultation for Friday, November 20th at 1 PM Pacific Time by phone?
+User: Yeah. Do that. 
+Agent: Okay, 
+Agent: I’m booking that now.
+User: Done. 
+Agent: I’m just waiting for the confirmation.
+Agent: Your consultation is booked for Friday, November 20th at 1 PM Pacific Time by phone. David Urmann will be your consultant. Thanks for 
+User: Awesome. 
+Agent: booking—have a great 

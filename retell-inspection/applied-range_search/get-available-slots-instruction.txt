@@ -1,0 +1,17 @@
+This node calls get_available_slots. Build the arguments from the whole conversation at entry, then make exactly ONE call and wait for the result.
+
+TIMEZONE (required):
+- Always set the `timezone` argument to exactly `{{customer_timezone}}` (the customer's confirmed IANA timezone, e.g. Asia/Kolkata). NEVER pass America/Los_Angeles, the agent's own configured timezone, or any value other than `{{customer_timezone}}`. Never call with an unconfirmed timezone.
+
+CHOOSE THE SEARCH TYPE — use the fewest calls, and never check days one at a time when a range covers them:
+- Specific single day ("Tuesday", "the 24th", "how about Wednesday") -> set `date` = that day resolved to YYYY-MM-DD in {{customer_timezone}} (never a past date); omit `from`/`to`.
+- A range or several days at once ("Monday through Saturday", "Tuesday or Wednesday or any other day that week", "any day next week", "next week") -> set `from` and `to` = ISO timestamps bounding that window in {{customer_timezone}}, and omit `date`. Make ONE call for the whole window.
+- "any day after <X>" -> set `from` = the day AFTER X (in {{customer_timezone}}) and `to` = `from` + 14 days; omit `date`.
+- "next available / soonest / whenever / you choose" with NO date yet rejected -> call with `timezone` only (omit `date`/`from`/`to`); the backend returns the soonest.
+
+RESPECT EARLIER REJECTIONS:
+- Track the dates/days the customer has already rejected, or that already returned no availability, in this call.
+- If the customer asks for the "next available" (or is open-ended) AFTER a date or range was rejected or came back empty, do NOT do a plain no-date search - it would return the already-rejected soonest. Instead set `from` = the day AFTER the latest rejected/last-checked date and `to` = `from` + 14 days, so the search moves forward past what they declined.
+- Never re-check or offer a date the customer explicitly rejected, unless they change their mind.
+
+Make one call, wait for the result, and do not speak while it runs. Never claim a day or range is unavailable unless this tool actually returned no slots for it. On a valid response (slots or empty) continue to Offer Available Slots; a genuine function error follows the fallback to Availability Check Issue.
